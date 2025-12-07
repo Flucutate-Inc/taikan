@@ -1,0 +1,21 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 開発用：全ユーザーに読み取りを許可
+    match /gyms/{gymId} {
+      allow read: if true;
+      allow write: if false; // 本番では管理者のみに制限
+    }
+    
+    match /areas/{areaId} {
+      allow read: if true;
+      allow write: if false;
+    }
+    
+    match /sports/{sportId} {
+      allow read: if true;
+      allow write: if false;
+    }
+  }
+}
+
