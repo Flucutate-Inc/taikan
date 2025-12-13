@@ -1,11 +1,13 @@
 'use client';
 
 import React, { useState } from 'react';
-import { X, Calendar as CalendarIcon, List as ListIcon } from 'lucide-react';
+import { X, Calendar as CalendarIcon, List as ListIcon, Plus } from 'lucide-react';
 import { Badge } from '@/components/ui/Badge';
 import { GymCard } from './GymCard';
+import { RegisterGymModal } from './RegisterGymModal';
 import { useGyms } from '@/hooks/useGyms';
 import { useMockGyms } from '@/hooks/useMockData';
+import { registerGymSource } from '@/lib/firebase/api';
 import type { Gym, SearchConditions } from '@/types';
 
 interface ListScreenProps {
@@ -17,6 +19,7 @@ interface ListScreenProps {
 export const ListScreen: React.FC<ListScreenProps> = ({ onBack, onSelectGym, searchConditions }) => {
     const [viewMode, setViewMode] = useState<'list' | 'calendar'>('list');
     const [selectedDate, setSelectedDate] = useState<number | null>(null);
+    const [isRegisterModalOpen, setIsRegisterModalOpen] = useState(false);
     
     // Firebaseからデータを取得（エラー時はモックデータにフォールバック）
     const { gyms: firebaseGyms, loading, error } = useGyms(searchConditions);
@@ -80,8 +83,15 @@ export const ListScreen: React.FC<ListScreenProps> = ({ onBack, onSelectGym, sea
                                 <GymCard key={gym.id} data={gym} onClick={() => onSelectGym(gym)} />
                             ))
                         ) : (
-                            <div className="text-center py-12 text-gray-500">
-                                <p>条件に一致する施設が見つかりませんでした</p>
+                            <div className="text-center py-12">
+                                <p className="text-gray-500 mb-6">条件に一致する施設が見つかりませんでした</p>
+                                <button
+                                    onClick={() => setIsRegisterModalOpen(true)}
+                                    className="flex items-center justify-center space-x-2 px-6 py-3 bg-teal-500 text-white rounded-xl font-bold hover:bg-teal-600 active:scale-[0.98] transition-all mx-auto"
+                                >
+                                    <Plus size={18} />
+                                    <span>体育館を登録する</span>
+                                </button>
                             </div>
                         )}
                     </div>
@@ -116,12 +126,63 @@ export const ListScreen: React.FC<ListScreenProps> = ({ onBack, onSelectGym, sea
                         {selectedDate && (
                              <div className="animate-fade-in">
                                  <p className="text-sm font-bold mb-2 text-teal-600">11月{selectedDate}日の空き状況</p>
-                                 <GymCard data={gyms[0]} onClick={() => onSelectGym(gyms[0])} />
+                                 {gyms.length > 0 ? (
+                                     <GymCard data={gyms[0]} onClick={() => onSelectGym(gyms[0])} />
+                                 ) : (
+                                     <div className="text-center py-12">
+                                         <p className="text-gray-500 mb-6">条件に一致する施設が見つかりませんでした</p>
+                                         <button
+                                             onClick={() => setIsRegisterModalOpen(true)}
+                                             className="flex items-center justify-center space-x-2 px-6 py-3 bg-teal-500 text-white rounded-xl font-bold hover:bg-teal-600 active:scale-[0.98] transition-all mx-auto"
+                                         >
+                                             <Plus size={18} />
+                                             <span>体育館を登録する</span>
+                                         </button>
+                                     </div>
+                                 )}
                              </div>
+                        )}
+                        {!selectedDate && gyms.length === 0 && (
+                            <div className="text-center py-12">
+                                <p className="text-gray-500 mb-6">条件に一致する施設が見つかりませんでした</p>
+                                <button
+                                    onClick={() => setIsRegisterModalOpen(true)}
+                                    className="flex items-center justify-center space-x-2 px-6 py-3 bg-teal-500 text-white rounded-xl font-bold hover:bg-teal-600 active:scale-[0.98] transition-all mx-auto"
+                                >
+                                    <Plus size={18} />
+                                    <span>体育館を登録する</span>
+                                </button>
+                            </div>
                         )}
                     </div>
                 )}
             </div>
+            
+            {/* Register Gym Modal */}
+            <RegisterGymModal
+                isOpen={isRegisterModalOpen}
+                onClose={() => setIsRegisterModalOpen(false)}
+                onSubmit={async (url) => {
+                    try {
+                        console.log('📝 Registering URL:', url);
+                        const result = await registerGymSource(url);
+                        console.log('✅ Registration result:', result);
+                        if (result.gymId && result.slotsAdded !== undefined) {
+                            alert(`URLを登録し、${result.slotsAdded}件の空き時間情報を追加しました。`);
+                            // ページをリロードして検索結果を更新
+                            window.location.reload();
+                        } else {
+                            alert('URLを登録しました。PDFの解析を開始しています...');
+                        }
+                    } catch (error) {
+                        console.error('❌ Failed to register URL:', error);
+                        const errorMessage = error instanceof Error 
+                            ? error.message 
+                            : 'URLの登録に失敗しました';
+                        alert(`エラー: ${errorMessage}\n\nもう一度お試しください。`);
+                    }
+                }}
+            />
         </div>
     );
 };

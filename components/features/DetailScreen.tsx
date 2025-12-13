@@ -47,36 +47,38 @@ export const DetailScreen: React.FC<DetailScreenProps> = ({ gym, onBack }) => {
                     </div>
                 </div>
                 {/* Schedule Section */}
-                <div className="bg-white rounded-3xl p-6 shadow-sm border border-gray-100">
+                {(gym as any).schedule && (gym as any).schedule.length > 0 && (
+                  <div className="bg-white rounded-3xl p-6 shadow-sm border border-gray-100">
                     <div className="flex items-center space-x-2 mb-4">
-                        <Clock className="text-teal-500" size={20} />
-                        <h3 className="text-lg font-bold text-gray-800">空いている時間</h3>
+                      <Clock className="text-teal-500" size={20} />
+                      <h3 className="text-lg font-bold text-gray-800">空いている時間</h3>
                     </div>
                     <div className="space-y-3">
-                        <p className="text-sm text-gray-500">本日 (11/29)</p>
-                        <div className="grid grid-cols-3 gap-3">
-                            {gym.schedule.map((slot, idx) => (
-                                <div 
-                                    key={idx} 
-                                    className={`flex flex-col items-center justify-center p-3 rounded-xl border ${
-                                        slot.status === '○' ? 'bg-teal-50 border-teal-200' :
-                                        slot.status === '△' ? 'bg-orange-50 border-orange-200' :
-                                        'bg-gray-100 border-transparent opacity-60'
-                                    }`}
-                                >
-                                    <span className="text-xs font-bold text-gray-600">{slot.time}</span>
-                                    <span className={`text-xl font-bold ${
-                                        slot.status === '○' ? 'text-teal-600' : 
-                                        slot.status === '△' ? 'text-orange-500' : 
-                                        'text-gray-400'
-                                    }`}>
-                                        {slot.status}
-                                    </span>
-                                </div>
-                            ))}
-                        </div>
+                      <p className="text-sm text-gray-500">本日</p>
+                      <div className="grid grid-cols-3 gap-3">
+                        {((gym as any).schedule as Array<{ time: string; status: string; status_code: string }>).map((slot, idx) => (
+                          <div 
+                            key={idx} 
+                            className={`flex flex-col items-center justify-center p-3 rounded-xl border ${
+                              slot.status === '○' ? 'bg-teal-50 border-teal-200' :
+                              slot.status === '△' ? 'bg-orange-50 border-orange-200' :
+                              'bg-gray-100 border-transparent opacity-60'
+                            }`}
+                          >
+                            <span className="text-xs font-bold text-gray-600">{slot.time}</span>
+                            <span className={`text-xl font-bold ${
+                              slot.status === '○' ? 'text-teal-600' : 
+                              slot.status === '△' ? 'text-orange-500' : 
+                              'text-gray-400'
+                            }`}>
+                              {slot.status}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
                     </div>
-                </div>
+                  </div>
+                )}
                 {/* Details List */}
                 {isGymDetail(gym) && (
                   <div className="bg-white rounded-3xl p-6 shadow-sm border border-gray-100 space-y-6">
@@ -124,4 +126,5 @@ export const DetailScreen: React.FC<DetailScreenProps> = ({ gym, onBack }) => {
         </div>
     );
 };
+
 

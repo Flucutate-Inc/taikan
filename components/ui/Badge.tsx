@@ -22,3 +22,4 @@ export const Badge: React.FC<BadgeProps> = ({ children, color = 'teal', variant 
   return <span className={`${baseClasses} ${styles[color]}`}>{children}</span>;
 };
 
+

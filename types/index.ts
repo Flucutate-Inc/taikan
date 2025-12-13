@@ -27,11 +27,10 @@ export interface Gym {
   id: number;
   name: string;
   distance: string;
-  area: string;
+  area_id?: string; // areasコレクションのドキュメントID
   address: string;
   courts: Courts;
   tags: string[];
-  schedule: ScheduleSlot[];
 }
 
 // 施設詳細情報
@@ -93,4 +92,5 @@ export type ModalType = 'area' | 'date' | 'sport' | null;
 export interface PrefectureData {
   [prefecture: string]: string[];
 }
+
 

@@ -62,3 +62,4 @@ export function useMockGyms() {
   return { gyms: MOCK_GYM_DATA, loading: false, error: null };
 }
 
+

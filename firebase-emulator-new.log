@@ -1,0 +1,9 @@
+i  emulators: Shutting down emulators.
+
+Error: Process `java -version` has exited with code 1. Please make sure Java is installed and on your system PATH.
+-----Original stdout-----
+-----Original stderr-----
+The operation couldn’t be completed. Unable to locate a Java Runtime.
+Please visit http://www.java.com for information on installing Java.
+
+

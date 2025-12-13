@@ -1,4 +1,5 @@
 {
+  "project": "demo-taikan",
   "emulators": {
     "auth": {
       "port": 9099
@@ -22,4 +23,5 @@
     "rules": "storage.rules"
   }
 }
+
 

@@ -31,26 +31,28 @@ export const GymCard: React.FC<GymCardProps> = ({ data, onClick }) => (
       </div>
     </div>
     {/* Scrollable Schedule */}
-    <div className="px-4 py-2 bg-gray-50">
-      <p className="text-[10px] text-gray-500 mb-1">本日の空き状況 (横スクロール)</p>
-      <div className="flex overflow-x-auto gap-2 pb-2 no-scrollbar">
-        {data.schedule.map((slot, idx) => (
-          <div
-            key={idx}
-            className={`flex flex-col items-center justify-center min-w-[50px] py-2 rounded-lg border ${
-              slot.status === '×' ? 'bg-gray-200 border-transparent opacity-60' : 'bg-white border-gray-200'
-            }`}
-          >
-            <span className="text-[10px] font-bold text-gray-600 mb-1">{slot.time}</span>
-            <span className={`text-lg font-bold ${
-              slot.status === '○' ? 'text-teal-500' : slot.status === '△' ? 'text-orange-400' : 'text-gray-400'
-            }`}>
-              {slot.status}
-            </span>
-          </div>
-        ))}
+    {(data as any).schedule && (data as any).schedule.length > 0 && (
+      <div className="px-4 py-2 bg-gray-50">
+        <p className="text-[10px] text-gray-500 mb-1">本日の空き状況 (横スクロール)</p>
+        <div className="flex overflow-x-auto gap-2 pb-2 no-scrollbar">
+          {((data as any).schedule as Array<{ time: string; status: string; status_code: string }>).map((slot, idx) => (
+            <div
+              key={idx}
+              className={`flex flex-col items-center justify-center min-w-[50px] py-2 rounded-lg border ${
+                slot.status === '×' ? 'bg-gray-200 border-transparent opacity-60' : 'bg-white border-gray-200'
+              }`}
+            >
+              <span className="text-[10px] font-bold text-gray-600 mb-1">{slot.time}</span>
+              <span className={`text-lg font-bold ${
+                slot.status === '○' ? 'text-teal-500' : slot.status === '△' ? 'text-orange-400' : 'text-gray-400'
+              }`}>
+                {slot.status}
+              </span>
+            </div>
+          ))}
+        </div>
       </div>
-    </div>
+    )}
     {/* Tags */}
     <div className="p-4 pt-2 flex flex-wrap gap-2 overflow-hidden">
       {data.tags.map(tag => (
@@ -61,4 +63,5 @@ export const GymCard: React.FC<GymCardProps> = ({ data, onClick }) => (
     </div>
   </div>
 );
+
 

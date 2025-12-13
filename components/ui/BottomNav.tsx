@@ -36,3 +36,4 @@ export const BottomNav: React.FC<BottomNavProps> = ({ activeTab, setActiveTab })
   );
 };
 
+

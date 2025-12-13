@@ -37,13 +37,20 @@ export const TopScreen: React.FC<TopScreenProps> = ({ onSearch }) => {
   };
 
   const handleSearch = () => {
+    console.log('🔍 Search button clicked', { conditions, keyword });
     const searchConditions: SearchConditions = {
       ...(conditions.area && { area: conditions.area }),
       ...(conditions.date && { date: conditions.date }),
       ...(conditions.sport && { sport: conditions.sport }),
       ...(keyword && { keyword }),
     };
-    onSearch(searchConditions);
+    console.log('🔍 Search conditions:', searchConditions);
+    console.log('🔍 onSearch function:', typeof onSearch);
+    if (typeof onSearch === 'function') {
+      onSearch(searchConditions);
+    } else {
+      console.error('❌ onSearch is not a function:', onSearch);
+    }
   };
 
   const hasConditions = conditions.area || conditions.date || conditions.sport;
@@ -97,8 +104,13 @@ export const TopScreen: React.FC<TopScreenProps> = ({ onSearch }) => {
             </div>
         </div>
         <button
-            onClick={handleSearch}
-            className="w-full h-[60px] bg-teal-500 text-white rounded-2xl text-lg font-bold shadow-lg hover:bg-teal-600 hover:-translate-y-0.5 active:translate-y-0 transition-all flex items-center justify-center"
+            type="button"
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              handleSearch();
+            }}
+            className="w-full h-[60px] bg-teal-500 text-white rounded-2xl text-lg font-bold shadow-lg hover:bg-teal-600 hover:-translate-y-0.5 active:translate-y-0 transition-all flex items-center justify-center cursor-pointer relative z-50"
         >
             検索
         </button>

@@ -14,6 +14,7 @@ export default function Home() {
   const [searchConditions, setSearchConditions] = useState<SearchConditions>({});
 
   const handleSearch = (conditions: SearchConditions) => {
+    console.log('🔍 handleSearch called in Home:', conditions);
     setSearchConditions(conditions);
     setCurrentPage('list');
   };

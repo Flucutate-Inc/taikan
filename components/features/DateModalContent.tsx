@@ -7,11 +7,47 @@ interface DateModalContentProps {
 }
 
 export const DateModalContent: React.FC<DateModalContentProps> = ({ onSelect }) => {
-  const todayDay = 29;
-  const currentMonthVisibleDays = [26, 27, 28, 29, 30];
-  const currentMonthOffset = 0;
-  const nextMonthDays = Array.from({ length: 31 }, (_, i) => i + 1);
-  const nextMonthOffset = 5;
+  // 当日日付を取得
+  const today = new Date();
+  const currentYear = today.getFullYear();
+  const currentMonth = today.getMonth() + 1; // 1-12
+  const todayDay = today.getDate();
+  
+  // 今月の日数を取得
+  const currentMonthDays = new Date(currentYear, currentMonth, 0).getDate();
+  // 今月の最初の日の曜日を取得（0=日曜日, 6=土曜日）
+  const currentMonthFirstDay = new Date(currentYear, currentMonth - 1, 1).getDay();
+  
+  // 今週の最初の日（日曜日）を計算
+  const todayDayOfWeek = today.getDay(); // 0=日曜日, 6=土曜日
+  const weekStartDay = todayDay - todayDayOfWeek; // 今週の日曜日の日付
+  
+  // 今週の最初の日から今月末までの日付を表示
+  // 今週の最初の日が1より小さい場合は1から開始（前月の日付は表示しない）
+  const startDay = Math.max(1, weekStartDay);
+  const currentMonthVisibleDays = Array.from(
+    { length: currentMonthDays - startDay + 1 },
+    (_, i) => startDay + i
+  );
+  
+  // 今週の最初の日の曜日を計算（今週の日曜日が今月の何日目か）
+  const weekStartDate = new Date(currentYear, currentMonth - 1, startDay);
+  const weekStartDayOfWeek = weekStartDate.getDay();
+  const currentMonthOffset = weekStartDayOfWeek;
+  
+  // 来月の日数を取得
+  const nextMonth = currentMonth === 12 ? 1 : currentMonth + 1;
+  const nextYear = currentMonth === 12 ? currentYear + 1 : currentYear;
+  const nextMonthDays = new Date(nextYear, nextMonth, 0).getDate();
+  const nextMonthFirstDay = new Date(nextYear, nextMonth - 1, 1).getDay();
+  const nextMonthVisibleDays = Array.from({ length: nextMonthDays }, (_, i) => i + 1);
+  const nextMonthOffset = nextMonthFirstDay;
+  
+  // 月名を取得
+  const monthNames = ['1月', '2月', '3月', '4月', '5月', '6月', '7月', '8月', '9月', '10月', '11月', '12月'];
+  const currentMonthName = monthNames[currentMonth - 1];
+  const nextMonthName = monthNames[nextMonth - 1];
+  
   const weekDays = ['日','月','火','水','木','金','土'];
   const [selectedDates, setSelectedDates] = useState<string[]>([]);
 
@@ -23,7 +59,7 @@ export const DateModalContent: React.FC<DateModalContentProps> = ({ onSelect }) 
     }
   };
 
-  const renderCalendar = (title: string, days: number[], startOffset: number, monthPrefix: string, minDay = 0) => (
+  const renderCalendar = (title: string, days: number[], startOffset: number, monthPrefix: string, minDay = 0, weekStart = 0) => (
     <div>
       <p className="text-lg font-bold text-gray-800 mb-3 sticky top-0 bg-white z-10 py-2">{title}</p>
       <div className="grid grid-cols-7 gap-1 mb-2">
@@ -36,15 +72,24 @@ export const DateModalContent: React.FC<DateModalContentProps> = ({ onSelect }) 
         {days.map(d => {
           const dateStr = `${monthPrefix}${d}日`;
           const isSelected = selectedDates.includes(dateStr);
-          const isDisabled = minDay > 0 && d < minDay;
+          // 今日より前の日付は無効化（薄く表示）
+          const isPast = minDay > 0 && d < minDay;
+          // 先週以前の日付は表示しない（weekStartより前は表示しない）
+          const isBeforeWeekStart = weekStart > 0 && d < weekStart;
+          
+          // 先週以前の日付は表示しない
+          if (isBeforeWeekStart) {
+            return null;
+          }
+          
           return (
             <button
               key={d}
-              disabled={isDisabled}
-              onClick={() => toggleDate(dateStr)}
+              disabled={isPast}
+              onClick={() => !isPast && toggleDate(dateStr)}
               className={`relative w-full pt-[100%] rounded-full flex items-center justify-center transition-all duration-200 ${
-                isDisabled 
-                  ? 'text-gray-300 bg-gray-50 cursor-not-allowed'
+                isPast 
+                  ? 'text-gray-300 bg-gray-50 cursor-not-allowed opacity-50'
                   : isSelected
                     ? 'bg-teal-500 text-white font-bold shadow-md transform scale-105'
                     : 'text-gray-700 hover:bg-gray-100 active:scale-95'
@@ -78,8 +123,8 @@ export const DateModalContent: React.FC<DateModalContentProps> = ({ onSelect }) 
       </div>
       <div className="border-t border-gray-100 my-2 flex-shrink-0"></div>
       <div className="space-y-8 pb-4 flex-1">
-        {renderCalendar('2023年 11月', currentMonthVisibleDays, currentMonthOffset, '11月', todayDay)}
-        {renderCalendar('2023年 12月', nextMonthDays, nextMonthOffset, '12月')}
+        {renderCalendar(`${currentYear}年 ${currentMonthName}`, currentMonthVisibleDays, currentMonthOffset, currentMonthName, todayDay, weekStartDay)}
+        {renderCalendar(`${nextYear}年 ${nextMonthName}`, nextMonthVisibleDays, nextMonthOffset, nextMonthName)}
       </div>
       <div className="sticky bottom-0 bg-white pt-4 pb-2 border-t border-gray-100 mt-auto">
         <button 
@@ -97,4 +142,5 @@ export const DateModalContent: React.FC<DateModalContentProps> = ({ onSelect }) 
     </div>
   );
 };
+
 
