@@ -5,6 +5,8 @@ import { Train, Navigation, ChevronDown, ChevronUp, Check } from 'lucide-react';
 
 interface LocationModalContentProps {
   onSelect: (value: string) => void;
+  onSelectLocation?: (lat: number, lng: number) => void;
+  initialValue?: string;
 }
 
 // 都道府県データ
@@ -22,11 +24,91 @@ const STATIONS = [
   '吉祥寺駅', '立川駅', '町田駅'
 ];
 
-export const LocationModalContent: React.FC<LocationModalContentProps> = ({ onSelect }) => {
+export const LocationModalContent: React.FC<LocationModalContentProps> = ({ onSelect, onSelectLocation, initialValue = '' }) => {
+  const [isGettingLocation, setIsGettingLocation] = useState(false);
+  const [locationError, setLocationError] = useState<string | null>(null);
+
+  const handleGetCurrentLocation = () => {
+    // エラーメッセージをクリア
+    setLocationError(null);
+    
+    if (!navigator.geolocation) {
+      setLocationError('位置情報サービスが利用できません');
+      return;
+    }
+
+    // 既に取得中の場合は何もしない（重複リクエストを防ぐ）
+    if (isGettingLocation) {
+      return;
+    }
+
+    setIsGettingLocation(true);
+
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        const { latitude, longitude } = position.coords;
+        setIsGettingLocation(false);
+        if (onSelectLocation) {
+          onSelectLocation(latitude, longitude);
+        } else {
+          onSelect('現在地周辺');
+        }
+      },
+      (error) => {
+        console.error('位置情報の取得に失敗しました:', error);
+        setIsGettingLocation(false);
+        let errorMessage = '位置情報の取得に失敗しました';
+        switch (error.code) {
+          case error.PERMISSION_DENIED:
+            errorMessage = '位置情報の使用が許可されていません';
+            break;
+          case error.POSITION_UNAVAILABLE:
+            errorMessage = '位置情報が利用できません';
+            break;
+          case error.TIMEOUT:
+            errorMessage = '位置情報の取得がタイムアウトしました';
+            break;
+        }
+        setLocationError(errorMessage);
+      },
+      {
+        enableHighAccuracy: true,
+        timeout: 10000,
+        maximumAge: 0  // キャッシュを使わず、毎回新しい位置情報を取得
+      }
+    );
+  };
+  // 初期値から選択状態を復元
+  const parseInitialValue = (value: string) => {
+    if (!value) return { areas: [], stations: [] };
+    const items = value.split(',').map(s => s.trim());
+    const allCities = Object.values(PREFECTURES).flat();
+    const areas: string[] = [];
+    const stations: string[] = [];
+    
+    items.forEach(item => {
+      if (allCities.includes(item)) {
+        areas.push(item);
+      } else if (STATIONS.includes(item)) {
+        stations.push(item);
+      }
+    });
+    
+    return { areas, stations };
+  };
+
+  const { areas: initialAreas, stations: initialStations } = parseInitialValue(initialValue);
+  
   const [tab, setTab] = useState<'area' | 'station' | 'current'>('area');
-  const [expandedPrefectures, setExpandedPrefectures] = useState(['東京都']);
-  const [selectedAreas, setSelectedAreas] = useState<string[]>([]);
-  const [selectedStations, setSelectedStations] = useState<string[]>([]);
+  const [expandedPrefectures, setExpandedPrefectures] = useState(() => {
+    // 選択されたエリアがある都道府県を展開
+    const prefsWithSelection = Object.keys(PREFECTURES).filter(pref => 
+      initialAreas.some(area => PREFECTURES[pref].includes(area))
+    );
+    return prefsWithSelection.length > 0 ? prefsWithSelection : ['東京都'];
+  });
+  const [selectedAreas, setSelectedAreas] = useState<string[]>(initialAreas);
+  const [selectedStations, setSelectedStations] = useState<string[]>(initialStations);
 
   const togglePrefectureExpand = (pref: string) => {
     if (expandedPrefectures.includes(pref)) {
@@ -189,28 +271,40 @@ export const LocationModalContent: React.FC<LocationModalContentProps> = ({ onSe
         )}
         
         {tab === 'current' && (
-           <button 
-             onClick={() => onSelect('現在地周辺')}
-             className="w-full flex items-center justify-center space-x-2 py-4 border-2 border-teal-500 text-teal-600 rounded-xl font-bold hover:bg-teal-50 mt-4"
-           >
-             <Navigation size={18} />
-             <span>現在地周辺を探す</span>
-           </button>
+          <div className="space-y-4">
+            <button 
+              onClick={handleGetCurrentLocation}
+              disabled={isGettingLocation}
+              className="w-full flex items-center justify-center space-x-2 py-4 border-2 border-teal-500 text-teal-600 rounded-xl font-bold hover:bg-teal-50 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+            >
+              <Navigation size={18} />
+              <span>{isGettingLocation ? '位置情報を取得中...' : '現在地周辺を探す'}</span>
+            </button>
+            {locationError && (
+              <p className="text-sm text-red-500 text-center">{locationError}</p>
+            )}
+          </div>
         )}
       </div>
       {(tab === 'area' || tab === 'station') && (
         <div className="absolute bottom-0 left-0 right-0 p-4 bg-white border-t border-gray-100 shadow-lg rounded-b-3xl z-10">
-          <button 
-            onClick={handleConfirm}
-            disabled={totalSelectedCount === 0}
-            className={`w-full py-4 rounded-xl font-bold shadow-lg transition-all ${
-              totalSelectedCount > 0 
-                ? 'bg-teal-500 text-white hover:bg-teal-600 active:scale-[0.98]' 
-                : 'bg-gray-200 text-gray-400 cursor-not-allowed'
-            }`}
-          >
-            決定 {totalSelectedCount > 0 && `(${totalSelectedCount})`}
-          </button>
+          <div className="flex gap-2">
+            <button 
+              onClick={() => {
+                setSelectedAreas([]);
+                setSelectedStations([]);
+              }}
+              className="px-4 py-4 rounded-xl font-bold transition-all bg-gray-200 text-gray-600 hover:bg-gray-300 active:scale-[0.98]"
+            >
+              クリア
+            </button>
+            <button 
+              onClick={handleConfirm}
+              className="flex-1 py-4 rounded-xl font-bold shadow-lg transition-all bg-teal-500 text-white hover:bg-teal-600 active:scale-[0.98]"
+            >
+              決定
+            </button>
+          </div>
         </div>
       )}
     </div>

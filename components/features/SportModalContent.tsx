@@ -55,12 +55,22 @@ export const SportModalContent: React.FC<SportModalContentProps> = ({ onSelect, 
           );
         })}
       </div>
-      <button
-        onClick={handleConfirm}
-        className="w-full py-3 bg-teal-500 text-white rounded-xl font-bold hover:bg-teal-600 transition-colors"
-      >
-        決定{selectedSports.length > 0 && ` (${selectedSports.length}件)`}
-      </button>
+      <div className="flex gap-2">
+        <button
+          onClick={() => {
+            setSelectedSports([]);
+          }}
+          className="px-4 py-3 rounded-xl font-bold transition-all bg-gray-200 text-gray-600 hover:bg-gray-300 active:scale-[0.98]"
+        >
+          クリア
+        </button>
+        <button
+          onClick={handleConfirm}
+          className="flex-1 py-3 bg-teal-500 text-white rounded-xl font-bold hover:bg-teal-600 transition-colors"
+        >
+          決定
+        </button>
+      </div>
     </div>
   );
 };

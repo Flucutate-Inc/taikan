@@ -31,6 +31,20 @@ export const TopScreen: React.FC<TopScreenProps> = ({ onSearch }) => {
     closeModal();
   };
 
+  const handleSelectLocation = (lat: number, lng: number) => {
+    setConditions(prev => ({ ...prev, area: '現在地周辺' }));
+    // 位置情報を検索条件に含める（検索時に使用）
+    const searchConditions: SearchConditions = {
+      ...(conditions.date && { date: conditions.date }),
+      ...(conditions.sport && { sport: conditions.sport }),
+      ...(keyword && { keyword }),
+      lat,
+      lng,
+    };
+    onSearch(searchConditions);
+    closeModal();
+  };
+
   const handleSportSelect = (value: string) => {
     setConditions(prev => ({ ...prev, sport: value }));
     closeModal();
@@ -120,14 +134,18 @@ export const TopScreen: React.FC<TopScreenProps> = ({ onSearch }) => {
         onClose={closeModal} 
         title="エリアを選択"
       >
-        <LocationModalContent onSelect={handleSelect} />
+        <LocationModalContent 
+          onSelect={handleSelect} 
+          onSelectLocation={handleSelectLocation}
+          initialValue={conditions.area} 
+        />
       </Modal>
       <Modal 
         isOpen={modalState.isOpen && modalState.type === 'date'} 
         onClose={closeModal} 
         title="日時を選択"
       >
-        <DateModalContent onSelect={handleSelect} />
+        <DateModalContent onSelect={handleSelect} initialValue={conditions.date} />
       </Modal>
       <Modal 
         isOpen={modalState.isOpen && modalState.type === 'sport'} 

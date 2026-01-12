@@ -4,9 +4,10 @@ import React, { useState } from 'react';
 
 interface DateModalContentProps {
   onSelect: (value: string) => void;
+  initialValue?: string;
 }
 
-export const DateModalContent: React.FC<DateModalContentProps> = ({ onSelect }) => {
+export const DateModalContent: React.FC<DateModalContentProps> = ({ onSelect, initialValue = '' }) => {
   // 当日日付を取得
   const today = new Date();
   const currentYear = today.getFullYear();
@@ -49,12 +50,48 @@ export const DateModalContent: React.FC<DateModalContentProps> = ({ onSelect }) 
   const nextMonthName = monthNames[nextMonth - 1];
   
   const weekDays = ['日','月','火','水','木','金','土'];
-  const [selectedDates, setSelectedDates] = useState<string[]>([]);
-  const [startTime, setStartTime] = useState<string>('指定なし');
-  const [endTime, setEndTime] = useState<string>('指定なし');
+  // 初期値から選択状態を復元
+  const parseInitialValue = (value: string) => {
+    if (!value) return { dates: [], startTime: '指定なし', endTime: '指定なし' };
+    // 日付と時間帯を分離（形式: "1月15日, 1月16日" または "1月15日, 1月16日 | 9:00 ~ 12:00"）
+    const parts = value.split(' | ');
+    const dates = parts[0] ? parts[0].split(',').map(s => s.trim()).filter(Boolean) : [];
+    // 時間帯は現在の実装では保存されていないため、デフォルト値を使用
+    return { dates, startTime: '指定なし', endTime: '指定なし' };
+  };
+
+  const initialData = parseInitialValue(initialValue);
+  
+  const [selectedDates, setSelectedDates] = useState<string[]>(initialData.dates);
+  const [startTime, setStartTime] = useState<string>(initialData.startTime);
+  const [endTime, setEndTime] = useState<string>(initialData.endTime);
+  const [isTimePickerOpen, setIsTimePickerOpen] = useState(false);
 
   const startTimeOptions = ['指定なし', '9:00', '12:00', '15:00', '18:00', '21:00'];
   const endTimeOptions = ['指定なし', '9:00', '12:00', '15:00', '18:00', '21:00'];
+  
+  // 時刻を数値に変換（分単位）
+  const timeToMinutes = (time: string): number | null => {
+    if (time === '指定なし') return null;
+    const [hours, minutes] = time.split(':').map(Number);
+    return hours * 60 + minutes;
+  };
+  
+  // バリデーション: 開始時刻 <= 終了時刻
+  const isTimeValid = (): boolean => {
+    if (startTime === '指定なし' || endTime === '指定なし') return true;
+    const startMinutes = timeToMinutes(startTime);
+    const endMinutes = timeToMinutes(endTime);
+    if (startMinutes === null || endMinutes === null) return true;
+    return startMinutes <= endMinutes;
+  };
+  
+  const getTimeDisplayText = () => {
+    if (startTime === '指定なし' && endTime === '指定なし') {
+      return '指定なし';
+    }
+    return `${startTime} ~ ${endTime}`;
+  };
 
   const toggleDate = (dateStr: string) => {
     if (selectedDates.includes(dateStr)) {
@@ -113,28 +150,82 @@ export const DateModalContent: React.FC<DateModalContentProps> = ({ onSelect }) 
   return (
     <div className="flex flex-col relative h-full">
       <div className="mb-6 flex-shrink-0">
-        <p className="text-sm font-bold text-gray-800 mb-3">時間帯 (開始 - 終了)</p>
-        <div className="flex items-center gap-2 mb-2">
-           <select 
-             value={startTime}
-             onChange={(e) => setStartTime(e.target.value)}
-             className="flex-1 p-3 bg-gray-100 rounded-xl text-sm border-none focus:ring-2 focus:ring-teal-500 outline-none"
-           >
-             {startTimeOptions.map(option => (
-               <option key={option} value={option}>{option}</option>
-             ))}
-           </select>
-           <span className="text-gray-400 font-bold">~</span>
-           <select 
-             value={endTime}
-             onChange={(e) => setEndTime(e.target.value)}
-             className="flex-1 p-3 bg-gray-100 rounded-xl text-sm border-none focus:ring-2 focus:ring-teal-500 outline-none"
-           >
-             {endTimeOptions.map(option => (
-               <option key={option} value={option}>{option}</option>
-             ))}
-           </select>
-        </div>
+        <p className="text-sm font-bold text-gray-800 mb-3">時間帯</p>
+        {!isTimePickerOpen ? (
+          <button
+            onClick={() => setIsTimePickerOpen(true)}
+            className="w-full p-3 bg-gray-100 rounded-xl text-sm border-none hover:bg-gray-200 transition-colors text-left flex items-center justify-between"
+          >
+            <span className="text-gray-800">{getTimeDisplayText()}</span>
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M6 9L1 4H11L6 9Z" fill="#666666"/>
+            </svg>
+          </button>
+        ) : (
+          <div className="bg-white border-2 border-teal-500 rounded-xl p-4">
+            <div className="flex items-center gap-4 mb-4">
+              <div className="flex-1">
+                <p className="text-xs text-gray-500 mb-2 font-bold">開始時刻</p>
+                <div className="relative h-[120px] overflow-y-auto border border-gray-200 rounded-lg">
+                  <div className="py-2">
+                    {startTimeOptions.map((option, index) => (
+                      <button
+                        key={option}
+                        onClick={() => setStartTime(option)}
+                        className={`w-full py-2 px-3 text-sm text-left transition-colors ${
+                          startTime === option
+                            ? 'bg-teal-50 text-teal-700 font-bold'
+                            : 'text-gray-700 hover:bg-gray-50'
+                        }`}
+                      >
+                        {option}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+              <span className="text-gray-400 font-bold text-lg mt-6">~</span>
+              <div className="flex-1">
+                <p className="text-xs text-gray-500 mb-2 font-bold">終了時刻</p>
+                <div className="relative h-[120px] overflow-y-auto border border-gray-200 rounded-lg">
+                  <div className="py-2">
+                    {endTimeOptions.map((option, index) => (
+                      <button
+                        key={option}
+                        onClick={() => setEndTime(option)}
+                        className={`w-full py-2 px-3 text-sm text-left transition-colors ${
+                          endTime === option
+                            ? 'bg-teal-50 text-teal-700 font-bold'
+                            : 'text-gray-700 hover:bg-gray-50'
+                        }`}
+                      >
+                        {option}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+            {!isTimeValid() && (
+              <p className="text-xs text-red-500 mb-2 text-center">開始時刻は終了時刻より前である必要があります</p>
+            )}
+            <button
+              onClick={() => {
+                if (isTimeValid()) {
+                  setIsTimePickerOpen(false);
+                }
+              }}
+              disabled={!isTimeValid()}
+              className={`w-full py-2 rounded-lg text-sm font-bold transition-colors ${
+                isTimeValid()
+                  ? 'bg-teal-500 text-white hover:bg-teal-600'
+                  : 'bg-gray-300 text-gray-500 cursor-not-allowed'
+              }`}
+            >
+              決定
+            </button>
+          </div>
+        )}
       </div>
       <div className="border-t border-gray-100 my-2 flex-shrink-0"></div>
       <div className="space-y-8 pb-4 flex-1">
@@ -142,17 +233,24 @@ export const DateModalContent: React.FC<DateModalContentProps> = ({ onSelect }) 
         {renderCalendar(`${nextYear}年 ${nextMonthName}`, nextMonthVisibleDays, nextMonthOffset, nextMonthName)}
       </div>
       <div className="sticky bottom-0 bg-white pt-4 pb-2 border-t border-gray-100 mt-auto">
-        <button 
-          onClick={() => onSelect(selectedDates.length > 0 ? selectedDates.join(', ') : '')}
-          disabled={selectedDates.length === 0}
-          className={`w-full py-4 rounded-xl font-bold shadow-lg transition-all ${
-            selectedDates.length > 0 
-              ? 'bg-teal-500 text-white hover:bg-teal-600 active:scale-[0.98]' 
-              : 'bg-gray-200 text-gray-400 cursor-not-allowed'
-          }`}
-        >
-          決定 {selectedDates.length > 0 && `(${selectedDates.length})`}
-        </button>
+        <div className="flex gap-2">
+          <button 
+            onClick={() => {
+              setSelectedDates([]);
+              setStartTime('指定なし');
+              setEndTime('指定なし');
+            }}
+            className="px-4 py-4 rounded-xl font-bold transition-all bg-gray-200 text-gray-600 hover:bg-gray-300 active:scale-[0.98]"
+          >
+            クリア
+          </button>
+          <button 
+            onClick={() => onSelect(selectedDates.length > 0 ? selectedDates.join(', ') : '')}
+            className="flex-1 py-4 rounded-xl font-bold shadow-lg transition-all bg-teal-500 text-white hover:bg-teal-600 active:scale-[0.98]"
+          >
+            決定
+          </button>
+        </div>
       </div>
     </div>
   );

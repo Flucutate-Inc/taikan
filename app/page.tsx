@@ -35,6 +35,13 @@ export default function Home() {
             onBack={() => setCurrentPage('top')} 
             onSelectGym={handleSelectGym}
             searchConditions={searchConditions}
+            onRemoveCondition={(key) => {
+              setSearchConditions(prev => {
+                const updated = { ...prev };
+                delete updated[key];
+                return updated;
+              });
+            }}
         />
       )}
       {currentPage === 'detail' && selectedGym && (
