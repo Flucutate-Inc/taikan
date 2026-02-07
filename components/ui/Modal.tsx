@@ -8,9 +8,11 @@ interface ModalProps {
   onClose: () => void;
   title: string;
   children: React.ReactNode;
+  /** false のときは内容に応じた高さ（従来どおり）。true または未指定で高さ固定 */
+  fixedHeight?: boolean;
 }
 
-export const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, children }) => {
+export const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, children, fixedHeight = true }) => {
   if (!isOpen) return null;
 
   return (
@@ -21,7 +23,7 @@ export const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, children }
         onClick={onClose}
       />
       {/* Content */}
-      <div className="relative w-full max-w-sm bg-white rounded-3xl shadow-2xl transform transition-all duration-300 scale-100 max-h-[85vh] overflow-hidden flex flex-col">
+      <div className={`relative w-full max-w-sm bg-white rounded-3xl shadow-2xl transform transition-all duration-300 scale-100 overflow-hidden flex flex-col ${fixedHeight ? 'h-[85vh]' : 'max-h-[85vh]'}`}>
         <div className="flex justify-between items-center p-6 pb-2 shrink-0">
           <h3 className="text-xl font-bold text-gray-800">{title}</h3>
           <button onClick={onClose} className="p-2 hover:bg-gray-100 rounded-full transition-colors">

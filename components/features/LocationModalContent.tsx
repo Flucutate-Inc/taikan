@@ -1,7 +1,7 @@
 'use client';
 
-import React, { useState } from 'react';
-import { Train, Navigation, ChevronDown, ChevronUp, Check } from 'lucide-react';
+import React, { useState, useMemo } from 'react';
+import { Train, Navigation, ChevronDown, ChevronUp, Check, Search } from 'lucide-react';
 
 interface LocationModalContentProps {
   onSelect: (value: string) => void;
@@ -109,6 +109,7 @@ export const LocationModalContent: React.FC<LocationModalContentProps> = ({ onSe
   });
   const [selectedAreas, setSelectedAreas] = useState<string[]>(initialAreas);
   const [selectedStations, setSelectedStations] = useState<string[]>(initialStations);
+  const [stationSearchQuery, setStationSearchQuery] = useState('');
 
   const togglePrefectureExpand = (pref: string) => {
     if (expandedPrefectures.includes(pref)) {
@@ -159,6 +160,13 @@ export const LocationModalContent: React.FC<LocationModalContentProps> = ({ onSe
 
   const totalSelectedCount = selectedAreas.length + selectedStations.length;
 
+  // 駅名でフィルタ（部分一致・大文字小文字無視）
+  const filteredStations = useMemo(() => {
+    if (!stationSearchQuery.trim()) return STATIONS;
+    const q = stationSearchQuery.trim().toLowerCase();
+    return STATIONS.filter(station => station.toLowerCase().includes(q));
+  }, [stationSearchQuery]);
+
   return (
     <div className="flex flex-col h-full">
       <div className="flex border-b border-gray-100 mb-4 shrink-0">
@@ -174,7 +182,7 @@ export const LocationModalContent: React.FC<LocationModalContentProps> = ({ onSe
           </button>
         ))}
       </div>
-      <div className="flex-1 min-h-[300px] overflow-y-auto pb-20">
+      <div className="flex-1 min-h-0 overflow-y-auto pb-4">
         {tab === 'area' && (
           <div className="flex flex-col space-y-3 animate-fade-in">
              <p className="text-xs text-gray-400 mb-1 px-2">都道府県を選択して詳細を表示</p>
@@ -248,8 +256,23 @@ export const LocationModalContent: React.FC<LocationModalContentProps> = ({ onSe
         
         {tab === 'station' && (
           <div className="flex flex-col space-y-1 animate-fade-in">
-             <p className="text-xs text-gray-400 mb-2 px-2">主要駅から探す</p>
-             {STATIONS.map(station => {
+             <div className="relative mb-3 mt-1 px-0.5">
+               <Search size={18} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+               <input
+                 type="text"
+                 placeholder="駅名を検索"
+                 value={stationSearchQuery}
+                 onChange={(e) => setStationSearchQuery(e.target.value)}
+                 className="w-full pl-10 pr-4 py-3 bg-white border border-gray-200 rounded-2xl text-sm placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-teal-500"
+               />
+             </div>
+             {!stationSearchQuery.trim() && (
+               <p className="text-xs text-gray-400 mb-2 px-2">主要駅から探す</p>
+             )}
+             {filteredStations.length === 0 ? (
+               <p className="text-sm text-gray-500 py-4 text-center">該当する駅がありません</p>
+             ) : (
+             filteredStations.map(station => {
                const isSelected = selectedStations.includes(station);
                return (
                  <button
@@ -266,7 +289,8 @@ export const LocationModalContent: React.FC<LocationModalContentProps> = ({ onSe
                     {isSelected && <Check size={18} className="text-teal-500" />}
                  </button>
                )
-             })}
+             })
+             )}
           </div>
         )}
         
@@ -287,7 +311,7 @@ export const LocationModalContent: React.FC<LocationModalContentProps> = ({ onSe
         )}
       </div>
       {(tab === 'area' || tab === 'station') && (
-        <div className="absolute bottom-0 left-0 right-0 p-4 bg-white border-t border-gray-100 shadow-lg rounded-b-3xl z-10">
+        <div className="shrink-0 -mx-6 px-6 pt-4 pb-0 bg-white border-t border-gray-100 rounded-b-3xl">
           <div className="flex gap-2">
             <button 
               onClick={() => {

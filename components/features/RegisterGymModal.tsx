@@ -2,7 +2,7 @@
 
 import React, { useState } from 'react';
 import { Modal } from '@/components/ui/Modal';
-import { Search, AlertCircle } from 'lucide-react';
+import { AlertCircle } from 'lucide-react';
 
 interface RegisterGymModalProps {
   isOpen: boolean;
@@ -51,7 +51,6 @@ export const RegisterGymModal: React.FC<RegisterGymModalProps> = ({ isOpen, onCl
               URL
             </label>
             <div className="flex items-center h-[52px] px-4 bg-white rounded-2xl border border-gray-200 shadow-sm">
-              <Search className="text-teal-500 mr-3" size={20} />
               <input
                 type="url"
                 placeholder="https://example.com/schedule.pdf"

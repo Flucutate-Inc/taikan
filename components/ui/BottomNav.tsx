@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import { Search, Heart, History } from 'lucide-react';
+import { Search, Heart, History, PlusCircle } from 'lucide-react';
 import type { NavTab } from '@/types';
 
 interface BottomNavProps {
@@ -14,6 +14,7 @@ export const BottomNav: React.FC<BottomNavProps> = ({ activeTab, setActiveTab })
     { id: 'search', icon: Search, label: '検索' },
     { id: 'favorites', icon: Heart, label: 'お気に入り' },
     { id: 'history', icon: History, label: '閲覧履歴' },
+    { id: 'register', icon: PlusCircle, label: '登録' },
   ];
 
   return (

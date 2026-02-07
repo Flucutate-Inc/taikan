@@ -151,6 +151,7 @@ export const TopScreen: React.FC<TopScreenProps> = ({ onSearch }) => {
         isOpen={modalState.isOpen && modalState.type === 'sport'} 
         onClose={closeModal} 
         title="競技を選択"
+        fixedHeight={false}
       >
         <SportModalContent onSelect={handleSportSelect} initialValue={conditions.sport} />
       </Modal>

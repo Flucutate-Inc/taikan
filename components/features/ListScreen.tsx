@@ -7,6 +7,7 @@ import { GymCard } from './GymCard';
 import { RegisterGymModal } from './RegisterGymModal';
 import { useGyms } from '@/hooks/useGyms';
 import { useMockGyms } from '@/hooks/useMockData';
+import { useFavorites } from '@/hooks/useFavorites';
 import { registerGymSource } from '@/lib/firebase/api';
 import type { Gym, SearchConditions } from '@/types';
 
@@ -108,6 +109,7 @@ export const ListScreen: React.FC<ListScreenProps> = ({ onBack, onSelectGym, sea
     const { gyms: firebaseGyms, loading, error } = useGyms(searchConditions);
     const { gyms: mockGyms } = useMockGyms();
     const gyms = error ? mockGyms : firebaseGyms;
+    const { isFavorite, toggle } = useFavorites();
 
     // デバッグログ
     console.log('🔍 ListScreen Debug:', { 
@@ -215,7 +217,17 @@ export const ListScreen: React.FC<ListScreenProps> = ({ onBack, onSelectGym, sea
                         <p className="text-xs text-gray-500 mb-3 ml-1">現在地から近い順</p>
                         {gyms.length > 0 ? (
                             gyms.map(gym => (
-                                <GymCard key={gym.id} data={gym} onClick={() => onSelectGym(gym)} />
+                                <GymCard
+                                    key={gym.id}
+                                    data={gym}
+                                    onClick={() => onSelectGym(gym)}
+                                    showFavoriteButton
+                                    isFavorite={isFavorite(gym.id)}
+                                    onToggleFavorite={(e) => {
+                                        e.stopPropagation();
+                                        toggle(gym);
+                                    }}
+                                />
                             ))
                         ) : (
                             <div className="text-center py-12">
@@ -242,7 +254,16 @@ export const ListScreen: React.FC<ListScreenProps> = ({ onBack, onSelectGym, sea
                              <div className="animate-fade-in">
                                  <p className="text-sm font-bold mb-2 text-teal-600">{selectedDate.month === 'current' ? `${currentMonthName}${selectedDate.day}日` : `${nextMonthName}${selectedDate.day}日`}の空き状況</p>
                                  {gyms.length > 0 ? (
-                                     <GymCard data={gyms[0]} onClick={() => onSelectGym(gyms[0])} />
+                                     <GymCard
+                                         data={gyms[0]}
+                                         onClick={() => onSelectGym(gyms[0])}
+                                         showFavoriteButton
+                                         isFavorite={isFavorite(gyms[0].id)}
+                                         onToggleFavorite={(e) => {
+                                             e.stopPropagation();
+                                             toggle(gyms[0]);
+                                         }}
+                                     />
                                  ) : (
                                      <div className="text-center py-12">
                                          <p className="text-gray-500 mb-6">条件に一致する施設が見つかりませんでした</p>

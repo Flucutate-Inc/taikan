@@ -60,13 +60,13 @@ export const SportModalContent: React.FC<SportModalContentProps> = ({ onSelect, 
           onClick={() => {
             setSelectedSports([]);
           }}
-          className="px-4 py-3 rounded-xl font-bold transition-all bg-gray-200 text-gray-600 hover:bg-gray-300 active:scale-[0.98]"
+          className="px-4 py-4 rounded-xl font-bold transition-all bg-gray-200 text-gray-600 hover:bg-gray-300 active:scale-[0.98]"
         >
           クリア
         </button>
         <button
           onClick={handleConfirm}
-          className="flex-1 py-3 bg-teal-500 text-white rounded-xl font-bold hover:bg-teal-600 transition-colors"
+          className="flex-1 py-4 rounded-xl font-bold shadow-lg transition-all bg-teal-500 text-white hover:bg-teal-600 active:scale-[0.98]"
         >
           決定
         </button>

@@ -1,16 +1,22 @@
 'use client';
 
 import React from 'react';
-import { MapPin } from 'lucide-react';
+import { MapPin, Heart } from 'lucide-react';
 import { Badge } from '@/components/ui/Badge';
 import type { Gym } from '@/types';
 
 interface GymCardProps {
   data: Gym;
   onClick: () => void;
+  /** お気に入りボタンを表示するか */
+  showFavoriteButton?: boolean;
+  /** お気に入り登録済みか */
+  isFavorite?: boolean;
+  /** お気に入りトグル（ハート押下時。showFavoriteButton 時は必須） */
+  onToggleFavorite?: (e: React.MouseEvent) => void;
 }
 
-export const GymCard: React.FC<GymCardProps> = ({ data, onClick }) => (
+export const GymCard: React.FC<GymCardProps> = ({ data, onClick, showFavoriteButton, isFavorite, onToggleFavorite }) => (
   <div
     className="bg-white rounded-2xl overflow-hidden shadow-sm border border-gray-100 mb-4 cursor-pointer transition-transform active:scale-[0.98]"
     onClick={onClick}
@@ -25,7 +31,21 @@ export const GymCard: React.FC<GymCardProps> = ({ data, onClick }) => (
           <span className="text-xs">{data.distance}</span>
         </div>
       </div>
-      <div className="flex flex-col items-end space-y-1">
+      <div className="flex flex-col items-end space-y-1 gap-1">
+        {showFavoriteButton && onToggleFavorite && (
+          <button
+            type="button"
+            onClick={onToggleFavorite}
+            className="p-2 -m-2 rounded-full hover:bg-gray-100 transition-colors touch-manipulation"
+            aria-label={isFavorite ? 'お気に入りを解除' : 'お気に入りに追加'}
+          >
+            <Heart
+              size={22}
+              className={isFavorite ? 'text-red-500 fill-red-500' : 'text-gray-400'}
+              fill={isFavorite ? 'currentColor' : 'none'}
+            />
+          </button>
+        )}
         {data.courts.badminton && <Badge color="orange" variant="outline">バド {data.courts.badminton}面</Badge>}
         {data.courts.tableTennis && <Badge color="blue" variant="outline">卓球 {data.courts.tableTennis}台</Badge>}
       </div>

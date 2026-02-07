@@ -80,10 +80,10 @@ export interface SearchConditions {
 }
 
 // ページタイプ
-export type PageType = 'top' | 'list' | 'detail';
+export type PageType = 'top' | 'list' | 'detail' | 'favorites' | 'history' | 'register';
 
 // ナビゲーションタブ
-export type NavTab = 'search' | 'favorites' | 'history';
+export type NavTab = 'search' | 'favorites' | 'history' | 'register';
 
 // モーダルタイプ
 export type ModalType = 'area' | 'date' | 'sport' | null;

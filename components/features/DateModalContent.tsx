@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 
 interface DateModalContentProps {
   onSelect: (value: string) => void;
@@ -66,6 +66,22 @@ export const DateModalContent: React.FC<DateModalContentProps> = ({ onSelect, in
   const [startTime, setStartTime] = useState<string>(initialData.startTime);
   const [endTime, setEndTime] = useState<string>(initialData.endTime);
   const [isTimePickerOpen, setIsTimePickerOpen] = useState(false);
+  const timeSectionRef = useRef<HTMLDivElement>(null);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const timeBeforeOpenRef = useRef<{ startTime: string; endTime: string } | null>(null);
+
+  useEffect(() => {
+    if (!isTimePickerOpen || !scrollContainerRef.current) return;
+    const container = scrollContainerRef.current;
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        container.scrollTo({
+          top: container.scrollHeight - container.clientHeight,
+          behavior: 'smooth',
+        });
+      });
+    });
+  }, [isTimePickerOpen]);
 
   const startTimeOptions = ['指定なし', '9:00', '12:00', '15:00', '18:00', '21:00'];
   const endTimeOptions = ['指定なし', '9:00', '12:00', '15:00', '18:00', '21:00'];
@@ -102,8 +118,8 @@ export const DateModalContent: React.FC<DateModalContentProps> = ({ onSelect, in
   };
 
   const renderCalendar = (title: string, days: number[], startOffset: number, monthPrefix: string, minDay = 0, weekStart = 0) => (
-    <div>
-      <p className="text-lg font-bold text-gray-800 mb-3 sticky top-0 bg-white z-10 py-2">{title}</p>
+    <div className="px-1">
+      <p className="text-lg font-bold text-gray-800 mb-3">{title}</p>
       <div className="grid grid-cols-7 gap-1 mb-2">
         {weekDays.map(d => (
           <div key={d} className="text-center text-xs font-bold text-gray-400 py-1">{d}</div>
@@ -133,7 +149,7 @@ export const DateModalContent: React.FC<DateModalContentProps> = ({ onSelect, in
                 isPast 
                   ? 'text-gray-300 bg-gray-50 cursor-not-allowed opacity-50'
                   : isSelected
-                    ? 'bg-teal-500 text-white font-bold shadow-md transform scale-105'
+                    ? 'bg-teal-500 text-white font-bold shadow-md scale-[1.02]'
                     : 'text-gray-700 hover:bg-gray-100 active:scale-95'
               }`}
             >
@@ -149,11 +165,20 @@ export const DateModalContent: React.FC<DateModalContentProps> = ({ onSelect, in
 
   return (
     <div className="flex flex-col relative h-full">
-      <div className="mb-6 flex-shrink-0">
-        <p className="text-sm font-bold text-gray-800 mb-3">時間帯</p>
+      <div ref={scrollContainerRef} className="space-y-5 pb-4 flex-1 min-h-0 overflow-y-auto overflow-x-hidden px-2">
+        <div className="space-y-4">
+          {renderCalendar(`${currentYear}年 ${currentMonthName}`, currentMonthVisibleDays, currentMonthOffset, currentMonthName, todayDay, weekStartDay)}
+          {renderCalendar(`${nextYear}年 ${nextMonthName}`, nextMonthVisibleDays, nextMonthOffset, nextMonthName)}
+        </div>
+        <div className="border-t border-gray-100 my-1"></div>
+        <div ref={timeSectionRef} className="mb-6">
+          <p className="text-sm font-bold text-gray-800 mb-3">時間帯</p>
         {!isTimePickerOpen ? (
           <button
-            onClick={() => setIsTimePickerOpen(true)}
+            onClick={() => {
+              timeBeforeOpenRef.current = { startTime, endTime };
+              setIsTimePickerOpen(true);
+            }}
             className="w-full p-3 bg-gray-100 rounded-xl text-sm border-none hover:bg-gray-200 transition-colors text-left flex items-center justify-between"
           >
             <span className="text-gray-800">{getTimeDisplayText()}</span>
@@ -209,30 +234,41 @@ export const DateModalContent: React.FC<DateModalContentProps> = ({ onSelect, in
             {!isTimeValid() && (
               <p className="text-xs text-red-500 mb-2 text-center">開始時刻は終了時刻より前である必要があります</p>
             )}
-            <button
-              onClick={() => {
-                if (isTimeValid()) {
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  if (timeBeforeOpenRef.current) {
+                    setStartTime(timeBeforeOpenRef.current.startTime);
+                    setEndTime(timeBeforeOpenRef.current.endTime);
+                  }
                   setIsTimePickerOpen(false);
-                }
-              }}
-              disabled={!isTimeValid()}
-              className={`w-full py-2 rounded-lg text-sm font-bold transition-colors ${
-                isTimeValid()
-                  ? 'bg-teal-500 text-white hover:bg-teal-600'
-                  : 'bg-gray-300 text-gray-500 cursor-not-allowed'
-              }`}
-            >
-              決定
-            </button>
+                }}
+                className="flex-[1] py-2 rounded-lg text-sm font-bold text-gray-600 bg-gray-200 hover:bg-gray-300 transition-colors"
+              >
+                キャンセル
+              </button>
+              <button
+                onClick={() => {
+                  if (isTimeValid()) {
+                    setIsTimePickerOpen(false);
+                  }
+                }}
+                disabled={!isTimeValid()}
+                className={`flex-1 py-2 rounded-lg text-sm font-bold transition-colors ${
+                  isTimeValid()
+                    ? 'bg-teal-500 text-white hover:bg-teal-600'
+                    : 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                }`}
+              >
+                決定
+              </button>
+            </div>
           </div>
         )}
+        </div>
       </div>
-      <div className="border-t border-gray-100 my-2 flex-shrink-0"></div>
-      <div className="space-y-8 pb-4 flex-1">
-        {renderCalendar(`${currentYear}年 ${currentMonthName}`, currentMonthVisibleDays, currentMonthOffset, currentMonthName, todayDay, weekStartDay)}
-        {renderCalendar(`${nextYear}年 ${nextMonthName}`, nextMonthVisibleDays, nextMonthOffset, nextMonthName)}
-      </div>
-      <div className="sticky bottom-0 bg-white pt-4 pb-2 border-t border-gray-100 mt-auto">
+      <div className="sticky bottom-0 -mx-6 px-6 pt-4 pb-0 bg-white border-t border-gray-100 mt-auto">
         <div className="flex gap-2">
           <button 
             onClick={() => {
