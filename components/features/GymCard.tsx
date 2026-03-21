@@ -50,21 +50,21 @@ export const GymCard: React.FC<GymCardProps> = ({ data, onClick, showFavoriteBut
         {data.courts.tableTennis && <Badge color="blue" variant="outline">卓球 {data.courts.tableTennis}台</Badge>}
       </div>
     </div>
-    {/* Scrollable Schedule */}
-    {(data as any).schedule && (data as any).schedule.length > 0 && (
+    {/* Scrollable Date Schedule */}
+    {data.schedule && data.schedule.length > 0 && (
       <div className="px-4 py-2 bg-gray-50">
-        <p className="text-[10px] text-gray-500 mb-1">本日の空き状況 (横スクロール)</p>
-        <div className="flex overflow-x-auto gap-2 pb-2 no-scrollbar">
-          {((data as any).schedule as Array<{ time: string; status: string; status_code: string }>).map((slot, idx) => (
+        <p className="text-[10px] text-gray-500 mb-1">個人開放スケジュール</p>
+        <div className="flex overflow-x-auto gap-1.5 pb-2 no-scrollbar">
+          {data.schedule.map((slot) => (
             <div
-              key={idx}
-              className={`flex flex-col items-center justify-center min-w-[50px] py-2 rounded-lg border ${
-                slot.status === '×' ? 'bg-gray-200 border-transparent opacity-60' : 'bg-white border-gray-200'
+              key={slot.date}
+              className={`flex flex-col items-center justify-center min-w-[52px] py-1.5 rounded-lg border ${
+                slot.status === '×' ? 'bg-gray-100 border-gray-200 opacity-60' : 'bg-teal-50 border-teal-200'
               }`}
             >
-              <span className="text-[10px] font-bold text-gray-600 mb-1">{slot.time}</span>
-              <span className={`text-lg font-bold ${
-                slot.status === '○' ? 'text-teal-500' : slot.status === '△' ? 'text-orange-400' : 'text-gray-400'
+              <span className="text-[9px] font-medium text-gray-500 leading-tight">{slot.label}</span>
+              <span className={`text-base font-bold mt-0.5 ${
+                slot.status === '○' ? 'text-teal-500' : 'text-gray-400'
               }`}>
                 {slot.status}
               </span>

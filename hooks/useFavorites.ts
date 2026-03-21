@@ -33,14 +33,14 @@ export function useFavorites() {
     setFavorites(loadFavorites());
   }, []);
 
-  const persist = useCallback((next: Gym[]) => {
-    setFavorites(next);
-    saveFavorites(next);
-  }, []);
-
   const add = useCallback((gym: Gym) => {
-    persist((prev) => (prev.some((g) => g.id === gym.id) ? prev : [...prev, gym]));
-  }, [persist]);
+    setFavorites((prev) => {
+      if (prev.some((g) => g.id === gym.id)) return prev;
+      const next = [...prev, gym];
+      saveFavorites(next);
+      return next;
+    });
+  }, []);
 
   const remove = useCallback((gymId: number) => {
     setFavorites((prev) => {

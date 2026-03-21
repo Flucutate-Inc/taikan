@@ -5,7 +5,7 @@
 
 import { collection, getDocs, doc, getDoc, query, where, Query, addDoc, Timestamp } from 'firebase/firestore';
 import { db } from './config';
-import type { Gym, GymDetail, GymsResponse, CalendarResponse, SearchConditions, StatusCode, ScheduleSlot } from '@/types';
+import type { Gym, GymDetail, GymsResponse, CalendarResponse, CalendarDay, SearchConditions, StatusCode, ScheduleSlot } from '@/types';
 
 /**
  * 施設検索・一覧取得（open_slotsベース）
@@ -116,26 +116,9 @@ export async function searchGyms(conditions: SearchConditions): Promise<GymsResp
       areaIdToNameMap[doc.id] = doc.data().name;
     });
 
-    // 日付を取得（表示用のschedule生成に使用）
-    let targetDate: string | null = null;
-    if (conditions.date) {
-      const dateParts = conditions.date.split(',')[0].trim();
-      const match = dateParts.match(/(\d+)月(\d+)日/);
-      if (match) {
-        const month = parseInt(match[1], 10);
-        const day = parseInt(match[2], 10);
-        const now = new Date();
-        const year = now.getFullYear();
-        const targetYear = month < now.getMonth() + 1 ? year + 1 : year;
-        targetDate = `${targetYear}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-      } else if (conditions.date.includes('-')) {
-        targetDate = conditions.date;
-      }
-    } else {
-      // 日付が指定されていない場合は今日の日付を使用
-      const today = new Date();
-      targetDate = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
-    }
+    // 今日の日付（今日以降のスロットのみ表示）
+    const today = new Date();
+    const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
 
     // gym_idごとのスロットをマップ
     const slotsByGymId: Record<string, any[]> = {};
@@ -150,7 +133,7 @@ export async function searchGyms(conditions: SearchConditions): Promise<GymsResp
       }
     });
 
-    for (const gymDocId of uniqueGymIds) {
+    for (const gymDocId of Array.from(uniqueGymIds)) {
       try {
         const gymDoc = await getDoc(doc(db, 'gyms', gymDocId));
         if (gymDoc.exists()) {
@@ -166,34 +149,35 @@ export async function searchGyms(conditions: SearchConditions): Promise<GymsResp
           const gymId = `gym_${gymDocId}`;
           const gymSlots = slotsByGymId[gymId] || [];
           
-          // 指定日（または今日）のスロットをフィルタリングしてschedule形式に変換
-          const todaySlots = targetDate 
-            ? gymSlots.filter(slot => slot.date === targetDate)
-            : gymSlots;
+          // 今日以降のスロットを日付ごとにグループ化
+          const weekDayNames = ['日', '月', '火', '水', '木', '金', '土'];
+          const dateHasAvailable = new Set<string>();
+          const allDates = new Set<string>();
           
-          // 時間帯ごとに集約（同じ時間帯のスロットをまとめる）
-          const timeSlotMap: Record<string, { status: string; status_code: string }> = {};
-          todaySlots.forEach(slot => {
-            const timeKey = slot.start_time;
-            // 複数のスロットがある場合は、最も空いているものを優先
-            if (!timeSlotMap[timeKey] || 
-                (slot.status === 'available' && timeSlotMap[timeKey].status_code !== 'available') ||
-                (slot.status === 'few' && timeSlotMap[timeKey].status_code === 'full')) {
-              timeSlotMap[timeKey] = {
-                status: slot.status === 'available' ? '○' : slot.status === 'few' ? '△' : slot.status === 'full' ? '×' : '-',
-                status_code: slot.status,
-              };
+          gymSlots.forEach(slot => {
+            if (slot.date >= todayStr) {
+              allDates.add(slot.date);
+              if (slot.status === 'available' || slot.status === 'few') {
+                dateHasAvailable.add(slot.date);
+              }
             }
           });
           
-          // schedule配列に変換（時間順にソート）
-          const schedule = Object.entries(timeSlotMap)
-            .sort(([a], [b]) => a.localeCompare(b))
-            .map(([time, status]) => ({
-              time,
-              status: status.status as '○' | '△' | '×' | '-',
-              status_code: status.status_code as StatusCode,
-            }));
+          // 日付順にソートしてschedule配列に変換
+          const schedule: ScheduleSlot[] = Array.from(allDates)
+            .sort()
+            .map(dateStr => {
+              const [y, m, d] = dateStr.split('-').map(Number);
+              const dateObj = new Date(y, m - 1, d);
+              const dow = weekDayNames[dateObj.getDay()];
+              const hasAvail = dateHasAvailable.has(dateStr);
+              return {
+                date: dateStr,
+                label: `${m}/${d}(${dow})`,
+                status: hasAvail ? '○' as const : '×' as const,
+                status_code: hasAvail ? 'available' as StatusCode : 'full' as StatusCode,
+              };
+            });
           
           gyms.push({
             id: data.id,
@@ -254,49 +238,49 @@ export async function getGymDetail(id: number, targetDate?: string): Promise<Gym
       }
     }
     
-    // open_slotsから該当gymのスロットを取得
+    // open_slotsから該当gymのスロットを取得（今日以降の全日付）
     const gymId = `gym_${gymDocId}`;
     let schedule: ScheduleSlot[] = [];
     
     try {
-      // 日付が指定されていない場合は今日の日付を使用
-      const date = targetDate || (() => {
-        const today = new Date();
-        return `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
-      })();
+      const todayForDetail = new Date();
+      const todayStrForDetail = `${todayForDetail.getFullYear()}-${String(todayForDetail.getMonth() + 1).padStart(2, '0')}-${String(todayForDetail.getDate()).padStart(2, '0')}`;
       
       const slotsSnapshot = await getDocs(
         query(
           collection(db, 'open_slots'),
           where('gym_id', '==', gymId),
-          where('date', '==', date),
+          where('date', '>=', todayStrForDetail),
           where('status', 'in', ['available', 'few'])
         )
       );
       
-      // 時間帯ごとに集約
-      const timeSlotMap: Record<string, { status: string; status_code: string }> = {};
-      slotsSnapshot.docs.forEach(doc => {
-        const slot = doc.data();
-        const timeKey = slot.start_time;
-        if (!timeSlotMap[timeKey] || 
-            (slot.status === 'available' && timeSlotMap[timeKey].status_code !== 'available') ||
-            (slot.status === 'few' && timeSlotMap[timeKey].status_code === 'full')) {
-          timeSlotMap[timeKey] = {
-            status: slot.status === 'available' ? '○' : slot.status === 'few' ? '△' : slot.status === 'full' ? '×' : '-',
-            status_code: slot.status,
-          };
+      const weekDayNames = ['日', '月', '火', '水', '木', '金', '土'];
+      const dateHasAvailable = new Set<string>();
+      const allDates = new Set<string>();
+      
+      slotsSnapshot.docs.forEach(d => {
+        const slot = d.data();
+        allDates.add(slot.date);
+        if (slot.status === 'available' || slot.status === 'few') {
+          dateHasAvailable.add(slot.date);
         }
       });
       
-      // schedule配列に変換（時間順にソート）
-      schedule = Object.entries(timeSlotMap)
-        .sort(([a], [b]) => a.localeCompare(b))
-        .map(([time, status]) => ({
-          time,
-          status: status.status as '○' | '△' | '×' | '-',
-          status_code: status.status_code as StatusCode,
-        }));
+      schedule = Array.from(allDates)
+        .sort()
+        .map(dateStr => {
+          const [y, m, d] = dateStr.split('-').map(Number);
+          const dateObj = new Date(y, m - 1, d);
+          const dow = weekDayNames[dateObj.getDay()];
+          const hasAvail = dateHasAvailable.has(dateStr);
+          return {
+            date: dateStr,
+            label: `${m}/${d}(${dow})`,
+            status: hasAvail ? '○' as const : '×' as const,
+            status_code: hasAvail ? 'available' as StatusCode : 'full' as StatusCode,
+          };
+        });
     } catch (error) {
       console.warn('⚠️ Failed to fetch schedule:', error);
     }
@@ -432,64 +416,86 @@ export async function getSports(): Promise<string[]> {
  * 体育館のURLを登録（sourcesコレクションに追加）
  * 登録後、自動的にPDFパーサーを実行してgyms/open_slotsに追加
  */
+export async function updateGymName(gymId: string, gymName: string): Promise<void> {
+  const response = await fetch('/api/update-gym', {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ gymId, gymName }),
+  });
+  if (!response.ok) {
+    const data = await response.json();
+    throw new Error(data.error || '施設名の更新に失敗しました');
+  }
+}
+
 export async function registerGymSource(url: string): Promise<{
   sourceId: string;
   gymId?: string;
+  gymName?: string;
+  gymNameAutoDetected?: boolean;
+  areaName?: string;
   slotsAdded?: number;
+  slotsFailed?: number;
+  summary?: {
+    totalSlots: number;
+    dates: string[];
+    sports: string[];
+    dateCount: number;
+    sportCount: number;
+  };
 }> {
   try {
     console.log('📝 Registering gym source URL:', url);
     
-    // URLからタイプを判定（PDFかWebか）
     const type = url.toLowerCase().endsWith('.pdf') ? 'pdf' : 'web';
     
-    // sourcesコレクションに追加
-    const docRef = await addDoc(collection(db, 'sources'), {
-      gym_id: null, // まだgym_idが不明な場合はnull（後でパーサーが設定）
+    const sourcePromise = addDoc(collection(db, 'sources'), {
+      gym_id: null,
       type: type,
       url: url,
       last_checked_at: Timestamp.now(),
-      parser_version: 'v1.0',
+      parser_version: 'v2.0',
     });
+    
+    const docRef = await Promise.race([
+      sourcePromise,
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('Firebaseへの接続に失敗しました。エミュレーターが起動しているか確認してください（npm run firebase:emulators）')), 10000)
+      ),
+    ]);
     
     const sourceId = docRef.id;
     console.log('✅ Source registered with ID:', sourceId);
     
-    // PDFの場合は自動的にパーサーを実行
     if (type === 'pdf') {
       try {
         console.log('🔄 Starting automatic PDF parsing...');
         const response = await fetch('/api/parse-pdf', {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            sourceId,
-            url,
-          }),
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ sourceId, url }),
         });
         
-        if (!response.ok) {
-          const errorData = await response.json();
-          throw new Error(errorData.message || 'Failed to parse PDF');
-        }
-        
         const result = await response.json();
-        console.log('✅ PDF parsing completed:', result);
         
-        if (!result.success) {
-          throw new Error(result.message || 'PDF parsing failed');
+        if (!response.ok || !result.success) {
+          throw new Error(result.message || 'PDF解析に失敗しました');
         }
+        
+        console.log('✅ PDF parsing completed:', result);
         
         return {
           sourceId,
           gymId: result.gymId,
+          gymName: result.gymName,
+          gymNameAutoDetected: result.gymNameAutoDetected,
+          areaName: result.areaName,
           slotsAdded: result.slotsAdded,
+          slotsFailed: result.slotsFailed,
+          summary: result.summary,
         };
       } catch (parseError) {
         console.error('❌ PDF parsing failed:', parseError);
-        // エラーを再スローして、フロントエンドで適切に処理できるようにする
         const errorMessage = parseError instanceof Error 
           ? parseError.message 
           : 'PDF解析に失敗しました';
@@ -497,10 +503,7 @@ export async function registerGymSource(url: string): Promise<{
       }
     }
     
-    // Webの場合はパーサーを実行しない（将来実装）
-    return {
-      sourceId,
-    };
+    return { sourceId };
   } catch (error) {
     console.error('Error registering gym source:', error);
     throw error;

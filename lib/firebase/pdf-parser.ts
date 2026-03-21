@@ -36,11 +36,10 @@ export interface ParsedPDFData {
 }
 
 /**
- * 競技名からsport_idを取得
+ * 競技名からsport_idを取得（存在しなければ自動作成）
  */
 async function getSportId(sportName: string): Promise<string | null> {
   try {
-    const { collection, getDocs, query, where } = await import('firebase/firestore');
     const sportsSnapshot = await getDocs(
       query(collection(db, 'sports'), where('name', '==', sportName))
     );
@@ -49,10 +48,16 @@ async function getSportId(sportName: string): Promise<string | null> {
       return sportsSnapshot.docs[0].id;
     }
     
-    console.warn(`⚠️ Sport not found: ${sportName}`);
-    return null;
+    // 存在しない場合は自動作成
+    console.log(`📝 Creating new sport: ${sportName}`);
+    const newSportDoc = await addDoc(collection(db, 'sports'), {
+      name: sportName,
+      created_at: Timestamp.now(),
+    });
+    console.log(`✅ Created sport: ${sportName} (${newSportDoc.id})`);
+    return newSportDoc.id;
   } catch (error) {
-    console.error('Error fetching sport:', error);
+    console.error('Error fetching/creating sport:', error);
     return null;
   }
 }
@@ -122,21 +127,14 @@ export async function convertPDFToOpenSlots(parsedData: ParsedPDFData): Promise<
     // 競技名→sport_idのマップを作成（キャッシュ）
     const sportIdMap: Record<string, string> = {};
     
-    // area_idを取得
+    // area_idを取得（なくてもスロット作成は続行する）
     console.log(`🔍 Fetching area_id for gym: ${parsedData.gym_id}`);
     const areaId = await getAreaIdFromGym(parsedData.gym_id);
-    if (!areaId) {
-      const error = `Failed to get area_id for gym: ${parsedData.gym_id}`;
-      console.error(`❌ ${error}`);
-      console.error(`❌ This means the gym document may not have an area_id field`);
-      console.error(`❌ Please check if the gym was created correctly`);
-      results.errors.push(error);
-      // area_idが取得できない場合でも処理を続行（エラーを記録するが、スロットは作成しない）
-      console.warn('⚠️ Skipping slot creation due to missing area_id');
-      return results;
+    if (areaId) {
+      console.log(`✅ Found area_id: ${areaId}`);
+    } else {
+      console.warn(`⚠️ No area_id for gym ${parsedData.gym_id} — slots will be created without area_id`);
     }
-    
-    console.log(`✅ Found area_id: ${areaId}`);
 
     // 各スロットを変換
     console.log(`📝 Processing ${parsedData.slots.length} slots...`);
@@ -163,10 +161,9 @@ export async function convertPDFToOpenSlots(parsedData: ParsedPDFData): Promise<
         }
 
         // open_slots形式に変換
-        const openSlotData = {
+        const openSlotData: Record<string, unknown> = {
           gym_id: parsedData.gym_id,
-          area_id: areaId.startsWith('area_') ? areaId : `area_${areaId}`,
-          sport_id: `sport_${sportId}`,
+          sport_id: sportId.startsWith('sport_') ? sportId : `sport_${sportId}`,
           date: slot.date,
           start_time: slot.start_time,
           end_time: slot.end_time,
@@ -179,6 +176,9 @@ export async function convertPDFToOpenSlots(parsedData: ParsedPDFData): Promise<
           source_id: parsedData.source_id,
           updated_at: Timestamp.now(),
         };
+        if (areaId) {
+          openSlotData.area_id = areaId.startsWith('area_') ? areaId : `area_${areaId}`;
+        }
 
         // Firestoreに投入
         console.log(`    💾 Saving to Firestore: ${JSON.stringify(openSlotData, null, 2)}`);

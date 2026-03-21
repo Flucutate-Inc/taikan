@@ -5,10 +5,11 @@
 // ステータスコード定義
 export type StatusCode = 'available' | 'few' | 'full' | 'unknown';
 
-// ステータス表示
+// ステータス表示（日付ベース）
 export interface ScheduleSlot {
-  time: string;
-  status: '○' | '△' | '×' | '-';
+  date: string;      // "YYYY-MM-DD"
+  label: string;     // "3/21(金)" 表示用
+  status: '○' | '×';
   status_code: StatusCode;
 }
 
@@ -16,10 +17,6 @@ export interface ScheduleSlot {
 export interface Courts {
   badminton?: number;
   tableTennis?: number;
-  basketball?: number;
-  volleyball?: number;
-  futsal?: number;
-  pool?: number;
 }
 
 // 施設情報（一覧用）
@@ -31,6 +28,8 @@ export interface Gym {
   address: string;
   courts: Courts;
   tags: string[];
+  /** 一覧カード用の当日スロット（モック・API拡張時） */
+  schedule?: ScheduleSlot[];
 }
 
 // 施設詳細情報

@@ -7,129 +7,548 @@ import { NextRequest, NextResponse } from 'next/server';
 import { collection, addDoc, doc, updateDoc, getDocs, query, where, Timestamp } from 'firebase/firestore';
 import { db } from '@/lib/firebase/config';
 import { convertPDFToOpenSlots, type ParsedPDFData, type ParsedPDFSlot } from '@/lib/firebase/pdf-parser';
+import path from 'path';
 
 /**
- * DeepSeek APIを使用してPDFから体育館情報を抽出
+ * URLドメインからエリア名（市区町村）を推測
+ * 例: www.city.kawaguchi.lg.jp → 川口市
+ */
+function guessAreaNameFromUrl(url: string): string | undefined {
+  try {
+    const hostname = new URL(url).hostname;
+    // www.city.XXX.lg.jp パターン
+    const cityMatch = hostname.match(/(?:www\.)?city\.([a-z]+)\.lg\.jp/i);
+    if (cityMatch) {
+      const cityMap: Record<string, string> = {
+        kawaguchi: '川口市',
+        saitama: 'さいたま市',
+        warabi: '蕨市',
+        toda: '戸田市',
+        hatogaya: '鳩ヶ谷市',
+        urawa: '浦和市',
+        omiya: '大宮市',
+        ageo: '上尾市',
+        koshigaya: '越谷市',
+        kasukabe: '春日部市',
+        tokorozawa: '所沢市',
+        kawagoe: '川越市',
+        kumagaya: '熊谷市',
+        yokohama: '横浜市',
+        chiba: '千葉市',
+        funabashi: '船橋市',
+        ichikawa: '市川市',
+        matsudo: '松戸市',
+        nerima: '練馬区',
+        setagaya: '世田谷区',
+        shinjuku: '新宿区',
+        shibuya: '渋谷区',
+        adachi: '足立区',
+        itabashi: '板橋区',
+        kita: '北区',
+      };
+      return cityMap[cityMatch[1].toLowerCase()];
+    }
+  } catch {
+    // URL parse failed
+  }
+  return undefined;
+}
+
+interface PdfTextItem {
+  text: string;
+  x: number;
+  y: number;
+}
+
+interface TableColumn {
+  facility: string;
+  period: 'am' | 'pm';
+  month: number;
+  year: number;
+  centerX: number;
+  startTime: string;
+  endTime: string;
+}
+
+function toHalfWidth(s: string): string {
+  return s.replace(/[０-９]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0));
+}
+
+function parseTimeText(text: string): { start: string; end: string } | null {
+  const hw = toHalfWidth(text);
+  const m = hw.match(/(\d{1,2})時(?:(\d{1,2})分)?～(\d{1,2})時(?:(\d{1,2})分)?/);
+  if (!m) return null;
+  return {
+    start: `${m[1].padStart(2, '0')}:${m[2] || '00'}`,
+    end: `${m[3].padStart(2, '0')}:${m[4] || '00'}`,
+  };
+}
+
+function inferYearFromUrl(url: string, month: number): number {
+  const match = url.match(/(\d{4})(\d{2})/);
+  if (match) {
+    const urlYear = parseInt(match[1], 10);
+    const urlMonth = parseInt(match[2], 10);
+    if (urlYear >= 2020 && urlYear <= 2030 && urlMonth >= 1 && urlMonth <= 12) {
+      if (month < urlMonth) return urlYear + 1;
+      return urlYear;
+    }
+  }
+  return new Date().getFullYear();
+}
+
+function createSlotFromColumn(date: string, col: TableColumn): ParsedPDFSlot {
+  return {
+    date,
+    start_time: col.startTime,
+    end_time: col.endTime,
+    sport_name: '体育館個人開放',
+    status: 'available',
+    capacity: null,
+    remaining: null,
+    reception_type: 'same_day',
+    target: '',
+    notes: '',
+  };
+}
+
+/**
+ * pdfjs-distの座標付きテキスト抽出でテーブル構造を直接解析。
+ * AI不要のため高速・正確。月/施設の区別も座標から確定。
+ */
+async function extractWithCoordinates(buffer: Buffer, url: string): Promise<{
+  gymName: string;
+  gymNameAutoDetected: boolean;
+  areaName?: string;
+  tel?: string;
+  slots: ParsedPDFSlot[];
+  rawText: string;
+} | null> {
+  try {
+    const pdfjsLib = await import(/* webpackIgnore: true */ 'pdfjs-dist/legacy/build/pdf.mjs');
+    const cMapUrl = path.join(process.cwd(), 'node_modules', 'pdfjs-dist', 'cmaps') + '/';
+    const doc = await (pdfjsLib as any).getDocument({
+      data: new Uint8Array(buffer),
+      cMapUrl,
+      cMapPacked: true,
+    }).promise;
+
+    const allSlots: ParsedPDFSlot[] = [];
+    let gymName = '';
+    let gymNameAutoDetected = false;
+    let tel: string | undefined;
+    let rawText = '';
+
+    for (let pageNum = 1; pageNum <= doc.numPages; pageNum++) {
+      const page = await doc.getPage(pageNum);
+      const vp = page.getViewport({ scale: 1.0 });
+      const tc = await page.getTextContent();
+
+      const items: PdfTextItem[] = tc.items
+        .filter((i: any) => i.str && i.str.trim())
+        .map((i: any) => ({
+          text: i.str.trim(),
+          x: Math.round(i.transform[4]),
+          y: Math.round(vp.height - i.transform[5]),
+        }))
+        .sort((a: PdfTextItem, b: PdfTextItem) => a.y - b.y || a.x - b.x);
+
+      rawText += items.map(i => i.text).join(' ') + '\n';
+      if (items.length === 0) continue;
+
+      if (pageNum === 1 && !gymName) {
+        for (const item of items) {
+          const nm = item.text.match(/([^\s]*(?:スポーツセンター|体育館|アリーナ|体育センター|総合体育館|武道館))/);
+          if (nm) { gymName = nm[1]; gymNameAutoDetected = true; break; }
+        }
+        if (!gymName) gymName = extractGymName(items.map(i => i.text).join(' '), url);
+      }
+
+      if (!tel) {
+        for (const item of items) {
+          const tm = item.text.match(/(0\d{1,4}[-ー]?\d{1,4}[-ー]?\d{4})/);
+          if (tm) { tel = tm[1]; break; }
+        }
+      }
+
+      // 月ヘッダー検出（"3月" or 全角 "３" near "体" chars）
+      const monthHeaders: { month: number; year: number; x: number }[] = [];
+      for (const item of items) {
+        const mm = item.text.match(/^(\d{1,2})月$/);
+        if (mm) {
+          const month = parseInt(mm[1], 10);
+          monthHeaders.push({ month, year: inferYearFromUrl(url, month), x: item.x });
+        }
+      }
+      if (monthHeaders.length === 0) {
+        const headerFacilityChars = items.filter(i => i.text === '体');
+        if (headerFacilityChars.length > 0) {
+          const hdrY = Math.min(...headerFacilityChars.map(f => f.y));
+          for (const item of items) {
+            if (Math.abs(item.y - hdrY) > 5) continue;
+            if (/^[０-９]+$/.test(item.text)) {
+              const month = parseInt(toHalfWidth(item.text), 10);
+              if (month >= 1 && month <= 12) {
+                monthHeaders.push({ month, year: inferYearFromUrl(url, month), x: item.x });
+              }
+            }
+          }
+        }
+      }
+      if (monthHeaders.length === 0) continue;
+      monthHeaders.sort((a, b) => a.x - b.x);
+
+      // 午前/午後ヘッダーから列を定義
+      const periodHeaders: { period: 'am' | 'pm'; x: number; y: number }[] = [];
+      for (const item of items) {
+        if (item.text === '午前') periodHeaders.push({ period: 'am', x: item.x, y: item.y });
+        else if (item.text === '午後') periodHeaders.push({ period: 'pm', x: item.x, y: item.y });
+      }
+      periodHeaders.sort((a, b) => a.x - b.x);
+
+      // === FORMAT 2: 時間テキスト方式（セルに時間テキストが直接記載されるフォーマット） ===
+      if (periodHeaders.length < 2) {
+        const badTexts = items.filter(i => i.text.includes('バドミントン'));
+        if (badTexts.length > 0) {
+          const sectionBounds: { month: number; year: number; leftX: number; rightX: number; gymMinX: number; gymMaxX: number }[] = [];
+          for (let mi = 0; mi < monthHeaders.length; mi++) {
+            const mh = monthHeaders[mi];
+            const leftX = mi > 0 ? (monthHeaders[mi - 1].x + mh.x) / 2 : 0;
+            const rightX = mi < monthHeaders.length - 1 ? (mh.x + monthHeaders[mi + 1].x) / 2 : 9999;
+            const sectionBads = badTexts.filter(b => b.x >= leftX && b.x < rightX);
+            if (sectionBads.length === 0) continue;
+            sectionBounds.push({
+              month: mh.month, year: mh.year,
+              leftX, rightX,
+              gymMinX: sectionBads[0].x - 20,
+              gymMaxX: sectionBads[0].x + 60,
+            });
+          }
+
+          const badHeaderY = Math.min(...badTexts.map(b => b.y));
+          const dataStartY = badHeaderY + 10;
+          const dataItems = items.filter(i => i.y >= dataStartY);
+
+          const rowMap = new Map<number, PdfTextItem[]>();
+          for (const item of dataItems) {
+            const key = Math.round(item.y / 13) * 13;
+            if (!rowMap.has(key)) rowMap.set(key, []);
+            rowMap.get(key)!.push(item);
+          }
+
+          for (const [, rowItems] of [...rowMap.entries()].sort((a, b) => a[0] - b[0])) {
+            const sorted = rowItems.sort((a, b) => a.x - b.x);
+            for (const section of sectionBounds) {
+              const sectionItems = sorted.filter(i => i.x >= section.leftX && i.x < section.rightX);
+              if (sectionItems.length === 0) continue;
+
+              const dayItem = sectionItems.find(i => {
+                const hw = toHalfWidth(i.text);
+                const n = parseInt(hw, 10);
+                return !isNaN(n) && n >= 1 && n <= 31 && /^[０-９\d]+$/.test(i.text);
+              });
+              if (!dayItem) continue;
+
+              const day = parseInt(toHalfWidth(dayItem.text), 10);
+              const dateStr = `${section.year}-${String(section.month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+              const dateObj = new Date(section.year, section.month - 1, day);
+              if (dateObj.getMonth() + 1 !== section.month || dateObj.getDate() !== day) continue;
+
+              const gymItems = sectionItems.filter(i =>
+                i.x >= section.gymMinX && i.x <= section.gymMaxX
+              );
+
+              let timeRange: { start: string; end: string } | null = null;
+              for (const gi of gymItems) {
+                const parsed = parseTimeText(gi.text);
+                if (parsed) { timeRange = parsed; break; }
+              }
+              if (!timeRange) continue;
+
+              allSlots.push({
+                date: dateStr,
+                start_time: timeRange.start,
+                end_time: timeRange.end,
+                sport_name: '体育館個人開放',
+                status: 'available',
+              });
+            }
+          }
+
+          console.log(`📊 Page ${pageNum} (time-text format): ${sectionBounds.map(s => s.month + '月').join(', ')}, ${allSlots.length} slots so far`);
+        }
+        continue;
+      }
+
+      // === FORMAT 1: ○/× with 午前/午後 ===
+      const headerY = Math.min(...periodHeaders.map(p => p.y));
+
+      // セクション分割（大きなx間隔 > 80px で分離）
+      const sectionGroups: typeof periodHeaders[] = [[]];
+      for (let i = 0; i < periodHeaders.length; i++) {
+        if (i > 0 && periodHeaders[i].x - periodHeaders[i - 1].x > 80) {
+          sectionGroups.push([]);
+        }
+        sectionGroups[sectionGroups.length - 1].push(periodHeaders[i]);
+      }
+
+      const sectionDividers: number[] = [];
+      for (let s = 0; s < sectionGroups.length - 1; s++) {
+        const rightMost = Math.max(...sectionGroups[s].map(p => p.x));
+        const leftMost = Math.min(...sectionGroups[s + 1].map(p => p.x));
+        sectionDividers.push((rightMost + leftMost) / 2);
+      }
+
+      // 各セクションに月を割り当て
+      const sectionMonths: { month: number; year: number }[] = [];
+      for (let s = 0; s < sectionGroups.length; s++) {
+        const centerX = sectionGroups[s].reduce((sum, p) => sum + p.x, 0) / sectionGroups[s].length;
+        let nearest = monthHeaders[0];
+        let minDist = Infinity;
+        for (const mh of monthHeaders) {
+          const d = Math.abs(centerX - mh.x);
+          if (d < minDist) { minDist = d; nearest = mh; }
+        }
+        sectionMonths.push({ month: nearest.month, year: nearest.year });
+      }
+
+      // 施設種別を「体」「プ」文字の座標から判定
+      const facilityChars = items.filter(i =>
+        i.y >= headerY - 25 && i.y < headerY &&
+        (i.text === '体' || i.text === 'プ')
+      );
+
+      // 列定義を構築
+      const columns: TableColumn[] = [];
+      for (let s = 0; s < sectionGroups.length; s++) {
+        for (const ph of sectionGroups[s]) {
+          let facility = '体育館';
+          let minDist = Infinity;
+          for (const fc of facilityChars) {
+            const d = Math.abs(fc.x - ph.x);
+            if (d < minDist) { minDist = d; facility = fc.text === 'プ' ? 'プール' : '体育館'; }
+          }
+          columns.push({
+            facility,
+            period: ph.period,
+            month: sectionMonths[s].month,
+            year: sectionMonths[s].year,
+            centerX: ph.x,
+            startTime: ph.period === 'am' ? '09:00' : '13:00',
+            endTime: ph.period === 'am' ? '13:00' : '16:45',
+          });
+        }
+      }
+
+      // 時間帯をサブヘッダーから取得
+      const timeItems = items.filter(i =>
+        i.y > headerY + 5 && i.y < headerY + 35 &&
+        /\d{1,2}[：:]\d{2}/.test(i.text)
+      );
+      for (const col of columns) {
+        const nearby = timeItems
+          .filter(t => Math.abs(t.x - col.centerX) < 25)
+          .sort((a, b) => a.y - b.y);
+        if (nearby.length >= 1) {
+          const m1 = nearby[0].text.match(/(\d{1,2})[：:](\d{2})/);
+          if (m1 && (nearby[0].text.includes('～') || nearby[0].text.includes('~'))) {
+            col.startTime = `${m1[1].padStart(2, '0')}:${m1[2]}`;
+          }
+        }
+        if (nearby.length >= 2) {
+          const m2 = nearby[1].text.match(/(\d{1,2})[：:](\d{2})/);
+          if (m2 && !nearby[1].text.includes('～') && !nearby[1].text.includes('~')) {
+            col.endTime = `${m2[1].padStart(2, '0')}:${m2[2]}`;
+          }
+        }
+      }
+
+      const gymColumns = columns.filter(c => c.facility === '体育館');
+      console.log(`📊 Page ${pageNum}: ${columns.length} columns (${gymColumns.length} gym), months: ${monthHeaders.map(m => m.month + '月').join(', ')}`);
+
+      if (gymColumns.length === 0) continue;
+
+      // 体育館のAM/PMペアを構築
+      const gymPairs: { am: TableColumn; pm: TableColumn; sectionIdx: number }[] = [];
+      for (let s = 0; s < sectionGroups.length; s++) {
+        const sectionGym = gymColumns.filter(c =>
+          c.month === sectionMonths[s].month && c.year === sectionMonths[s].year
+        );
+        const am = sectionGym.find(c => c.period === 'am');
+        const pm = sectionGym.find(c => c.period === 'pm');
+        if (am || pm) {
+          gymPairs.push({ am: am || pm!, pm: pm || am!, sectionIdx: s });
+        }
+      }
+
+      // データ行を処理
+      const dataStartY = headerY + 40;
+      const dataItems = items.filter(i => i.y >= dataStartY);
+
+      const rowMap = new Map<number, PdfTextItem[]>();
+      for (const item of dataItems) {
+        const key = Math.round(item.y / 17) * 17;
+        if (!rowMap.has(key)) rowMap.set(key, []);
+        rowMap.get(key)!.push(item);
+      }
+
+      const getSectionIdx = (x: number) => {
+        for (let i = 0; i < sectionDividers.length; i++) {
+          if (x < sectionDividers[i]) return i;
+        }
+        return sectionDividers.length;
+      };
+
+      for (const [, rowItems] of [...rowMap.entries()].sort((a, b) => a[0] - b[0])) {
+        const sorted = rowItems.sort((a, b) => a.x - b.x);
+
+        for (const pair of gymPairs) {
+          const sectionItems = sorted.filter(i => getSectionIdx(i.x) === pair.sectionIdx);
+          if (sectionItems.length === 0) continue;
+
+          const dayItem = sectionItems.find(i =>
+            /^\d{1,2}$/.test(i.text) && parseInt(i.text) >= 1 && parseInt(i.text) <= 31
+          );
+          if (!dayItem) continue;
+
+          const day = parseInt(dayItem.text, 10);
+          const dateStr = `${pair.am.year}-${String(pair.am.month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+
+          const dateObj = new Date(pair.am.year, pair.am.month - 1, day);
+          if (dateObj.getMonth() + 1 !== pair.am.month || dateObj.getDate() !== day) continue;
+
+          const gymMinX = pair.am.centerX - 30;
+          const gymMaxX = pair.pm.centerX + 30;
+
+          // 「中止」テキストの範囲が体育館列と重なるかチェック
+          const hasCancellation = sectionItems.some(i => {
+            if (!i.text.includes('中止')) return false;
+            const textRight = i.x + i.text.length * 13;
+            return i.x <= gymMaxX && textRight >= gymMinX;
+          });
+          if (hasCancellation) continue;
+
+          const statusMarks = sectionItems.filter(i =>
+            i.x >= gymMinX && i.x <= gymMaxX &&
+            /^[○〇◯×✕✖]$/.test(i.text)
+          );
+          if (statusMarks.length === 0) continue;
+
+          for (const mark of statusMarks) {
+            if (mark.text === '×' || mark.text === '✕' || mark.text === '✖') continue;
+
+            const distToAm = Math.abs(mark.x - pair.am.centerX);
+            const distToPm = Math.abs(mark.x - pair.pm.centerX);
+
+            if (distToAm < 15) {
+              allSlots.push(createSlotFromColumn(dateStr, pair.am));
+            } else if (distToPm < 15) {
+              allSlots.push(createSlotFromColumn(dateStr, pair.pm));
+            } else {
+              // AM/PMの中間 → 休日の全日開放パターン（両方のスロットを作成）
+              allSlots.push(createSlotFromColumn(dateStr, pair.am));
+              allSlots.push(createSlotFromColumn(dateStr, pair.pm));
+            }
+          }
+        }
+      }
+    }
+
+    console.log(`✅ Coordinate extraction: ${allSlots.length} gym slots found (gymName auto: ${gymNameAutoDetected})`);
+    return {
+      gymName: gymName || '体育館',
+      gymNameAutoDetected,
+      areaName: guessAreaNameFromUrl(url),
+      tel,
+      slots: allSlots,
+      rawText,
+    };
+  } catch (error) {
+    console.warn('⚠️ Coordinate extraction failed:', error instanceof Error ? error.message : error);
+    return null;
+  }
+}
+
+/**
+ * PDFから体育館情報を抽出
+ * 1) pdfjs-dist座標解析（高速・正確・AI不要）
+ * 2) DeepSeek AI（フォールバック）
  */
 async function parsePDF(url: string): Promise<{
   gymName: string;
+  gymNameAutoDetected: boolean;
   address?: string;
   tel?: string;
   areaName?: string;
   slots: ParsedPDFSlot[];
 }> {
-  console.log('📄 Parsing PDF from URL with DeepSeek AI:', url);
-  
-  try {
-    // PDFをダウンロード
-    const response = await fetch(url);
-    if (!response.ok) {
-      const errorMessage = `PDF download failed: ${response.status} ${response.statusText}`;
-      console.error(`❌ ${errorMessage}`);
-      throw new Error(errorMessage);
-    }
-    
-    const arrayBuffer = await response.arrayBuffer();
-    const buffer = Buffer.from(arrayBuffer);
-    
-    // pdf-parseでテキストを抽出
-    // requireを使用（next.config.jsでexternalizeされているため）
-    let pdfData: any;
-    try {
-      // @ts-ignore - pdf-parseはCommonJSモジュールで型定義が不完全
-      const pdfParseModule = require('pdf-parse');
-      
-      // pdf-parse v2.4.5以降はPDFParseクラスを提供
-      // まず、関数として直接呼び出せるか確認
-      let pdfParse: any;
-      if (typeof pdfParseModule === 'function') {
-        // 関数として直接呼び出し可能
-        pdfParse = pdfParseModule;
-      } else if (pdfParseModule.default && typeof pdfParseModule.default === 'function') {
-        // default exportが関数
-        pdfParse = pdfParseModule.default;
-      } else if (pdfParseModule.PDFParse) {
-        // PDFParseクラスの場合、インスタンスを作成してload/getTextメソッドを使用
-        const PDFParseClass = pdfParseModule.PDFParse;
-        if (typeof PDFParseClass === 'function') {
-          // クラスコンストラクタの場合、オプションオブジェクトを渡す
-          // verbosityプロパティを設定（ログレベル: 0=エラーのみ, 1=警告, 2=情報）
-          pdfParse = async (buf: Buffer) => {
-            // PDFParseクラスのコンストラクタにdataを渡し、その後load()を引数なしで呼び出す
-            const parser = new PDFParseClass({ verbosity: 0, data: buf });
-            await parser.load();
-            const text = parser.getText();
-            console.log('📝 getText() result type:', typeof text);
-            console.log('📝 getText() result length:', text ? text.length : 'null/undefined');
-            // getText()がundefinedやnullを返す場合の処理
-            if (text === undefined || text === null) {
-              console.warn('⚠️ getText() returned undefined/null, trying alternative method');
-              // 代替方法: 全ページのテキストを取得
-              const doc = parser.doc;
-              if (doc) {
-                let fullText = '';
-                const numPages = doc.numPages || 0;
-                for (let i = 1; i <= numPages; i++) {
-                  const pageText = parser.getPageText(i);
-                  if (pageText) {
-                    fullText += pageText + '\n';
-                  }
-                }
-                return { text: fullText || '' };
-              }
-              return { text: '' };
-            }
-            return { text: text || '' };
-          };
-        } else {
-          throw new Error(`PDFParse is not a constructor. Type: ${typeof PDFParseClass}`);
-        }
-      } else {
-        const errorMessage = `pdf-parse module is not available. Type: ${typeof pdfParseModule}, Keys: ${Object.keys(pdfParseModule || {}).join(', ')}`;
-        console.error(`❌ ${errorMessage}`);
-        throw new Error(errorMessage);
-      }
-      
-      pdfData = await pdfParse(buffer);
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Failed to parse PDF';
-      console.error(`❌ Failed to require/use pdf-parse: ${errorMessage}`);
-      throw new Error(`PDF parsing failed: ${errorMessage}`);
-    }
-    
-    const text = pdfData.text;
-    
-    console.log('📄 PDF text extracted, length:', text.length);
-    
-    // DeepSeek APIを使用して情報を抽出
-    const extractedData = await extractWithDeepSeek(text, url);
-    
-    // areaNameがnullや空文字列の場合はundefinedに変換
-    const normalizedData = {
-      ...extractedData,
-      areaName: extractedData.areaName && extractedData.areaName.trim() 
-        ? extractedData.areaName.trim() 
-        : undefined,
-    };
-    
-    console.log('✅ Extracted with AI:', {
-      gymName: normalizedData.gymName,
-      areaName: normalizedData.areaName,
-      address: normalizedData.address,
-      tel: normalizedData.tel,
-      slotsCount: normalizedData.slots.length,
-    });
-    
-    return normalizedData;
-  } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred during PDF parsing';
-    console.error(`❌ Error parsing PDF: ${errorMessage}`);
-    throw new Error(`PDF parsing failed: ${errorMessage}`);
+  console.log('📄 Parsing PDF:', url);
+
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`PDF download failed: ${response.status} ${response.statusText}`);
   }
+  const buffer = Buffer.from(await response.arrayBuffer());
+
+  // 方法1: 座標ベース解析（推奨・高速）
+  console.log('📐 Attempting coordinate-based extraction...');
+  const coordResult = await extractWithCoordinates(buffer, url);
+
+  if (coordResult && coordResult.slots.length > 0) {
+    console.log(`✅ Coordinate extraction succeeded: ${coordResult.slots.length} slots`);
+    return {
+      gymName: coordResult.gymName,
+      gymNameAutoDetected: coordResult.gymNameAutoDetected,
+      areaName: coordResult.areaName || guessAreaNameFromUrl(url),
+      tel: coordResult.tel,
+      slots: coordResult.slots,
+    };
+  }
+
+  // 方法2: DeepSeek AIフォールバック
+  console.log('🤖 Falling back to DeepSeek AI extraction...');
+  let text = coordResult?.rawText || '';
+
+  if (!text.trim()) {
+    try {
+      // @ts-ignore
+      const pdfParseModule = require('pdf-parse');
+      const parseFn = typeof pdfParseModule === 'function' ? pdfParseModule : pdfParseModule.default;
+      const result = await parseFn(buffer);
+      text = result.text || '';
+    } catch {
+      throw new Error('PDFテキスト抽出に失敗しました');
+    }
+  }
+
+  if (!text.trim()) {
+    throw new Error('PDFからテキストを抽出できませんでした');
+  }
+
+  const extractedData = await extractWithDeepSeek(text, url);
+  const validatedSlots = validateSlotDatesAgainstPdf(extractedData.slots, text);
+
+  const areaName = extractedData.areaName?.trim() || guessAreaNameFromUrl(url);
+
+  console.log('✅ DeepSeek extraction:', {
+    gymName: extractedData.gymName,
+    areaName,
+    slotsCount: validatedSlots.length,
+  });
+
+  return {
+    gymName: extractedData.gymName,
+    gymNameAutoDetected: true,
+    areaName,
+    address: extractedData.address,
+    tel: extractedData.tel,
+    slots: validatedSlots,
+  };
 }
 
 /**
  * DeepSeek APIを使用してPDFテキストから情報を抽出
+ * コンパクトTSV出力で高速化
  */
 async function extractWithDeepSeek(text: string, url: string): Promise<{
   gymName: string;
@@ -139,55 +558,50 @@ async function extractWithDeepSeek(text: string, url: string): Promise<{
   slots: ParsedPDFSlot[];
 }> {
   const deepSeekApiKey = process.env.DEEPSEEK_API_KEY;
-  
   if (!deepSeekApiKey) {
-    const errorMessage = 'DEEPSEEK_API_KEY environment variable is not set';
-    console.error(`❌ ${errorMessage}`);
-    throw new Error(errorMessage);
+    throw new Error('DEEPSEEK_API_KEY environment variable is not set');
   }
   
-  // PDFテキストが長すぎる場合は最初の部分を使用（トークン制限対策）
-  const maxTextLength = 8000; // DeepSeekのコンテキスト制限を考慮
-  const truncatedText = text.length > maxTextLength 
-    ? text.substring(0, maxTextLength) + '\n\n... (テキストが長いため省略)'
+  const maxTextLength = 12000;
+  const inputText = text.length > maxTextLength
+    ? text.substring(0, maxTextLength) + '\n...(省略)'
     : text;
   
-  const prompt = `あなたは体育館の個人開放スケジュールPDFを解析する専門家です。以下のPDFテキストから、体育館情報と空き時間スロットを抽出してください。
+  const now = new Date();
+  const currentYear = now.getFullYear();
+  const currentMonth = now.getMonth() + 1;
+  
+  const prompt = `体育館の個人開放スケジュールPDFテキストを解析してください。
 
+本日: ${currentYear}-${String(currentMonth).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}
+PDF URL: ${url}
 PDFテキスト:
-${truncatedText}
+${inputText}
 
-以下のJSON形式で回答してください。存在しない情報はnullまたは空配列にしてください。
+以下の形式で出力してください。ヘッダー行の後に、1行1スロットでTSV（タブ区切り）で出力。
 
-{
-  "gymName": "体育館名（例: 渋谷区スポーツセンター）",
-  "areaName": "エリア名（例: 渋谷区）",
-  "address": "住所（例: 東京都渋谷区西原1-40-18）",
-  "tel": "電話番号（例: 03-3468-9051）",
-  "slots": [
-    {
-      "date": "YYYY-MM-DD形式の日付（例: 2024-12-15）",
-      "start_time": "HH:mm形式の開始時間（例: 09:00）",
-      "end_time": "HH:mm形式の終了時間（例: 11:00）",
-      "sport_name": "競技名（例: バドミントン、卓球、バスケットボールなど）",
-      "status": "空き状況（available: 空き、few: 少、full: 満、closed: 閉）",
-      "capacity": 定員数（不明な場合はnull）,
-      "remaining": 残り枠数（不明な場合はnull）,
-      "reception_type": "受付方法（same_day: 当日、reservation: 予約制、lottery: 抽選）",
-      "target": "対象者（例: 高校生以上）",
-      "notes": "備考（例: ラケット持参）"
-    }
-  ]
-}
+INFO\t施設名\tエリア名（市区町村名）\t電話番号
+SLOT\tYYYY-MM-DD\tHH:mm\tHH:mm\t競技名\tavailable/few/full/closed\t備考
 
-重要:
-- 日付は必ずYYYY-MM-DD形式に変換してください（例: "11月29日" → "2024-11-29"）
-- 現在の年を基準に日付を決定してください（2024年または2025年）
-- 空き状況は記号（○、△、×、休など）や文字列（空き、少、満、閉など）から適切に判定してください
-- 競技名は一般的な名称に統一してください（例: "バレー" → "バレーボール"）
-- 時間は24時間形式でHH:mmに統一してください
-- スロットが見つからない場合は空配列[]を返してください`;
+ルール:
+- 和暦→西暦変換: 令和N年 = 2018+N年（R6=2024, R7=2025, R8=2026）
+- 重要: 日本の「年度」は4月始まり。「令和7年度3月」=2026年3月、「令和7年度4月」は存在しない（4月は令和8年度）。PDFの日付が本日（${currentYear}年）より1年以上過去になる場合は年度計算を見直すこと
+- ○/〇→available, △→few, ×→full, 中止→closed
+- 「1 日」「5 木」= 日付+曜日。月はヘッダー(3月等)から判定
+- 体育館の個人開放スロットのみ出力する。プール・水泳・トレーニングルーム・浴室・庭球場など体育館以外の施設は無視すること
+- 体育館個人開放(卓球・バドミントン等が利用可能)→競技名は"体育館個人開放"
+- 午前/午後の時間帯はPDF記載の時間を使用。なければ午前=09:00-13:00, 午後=13:00-17:00
+- ×(未実施)のスロットは出力しない。○(実施)のスロットのみ出力
+- 複数月のデータがあればすべて出力
+- エリア名はPDFテキストまたはURLのドメイン（例: www.city.kawaguchi.lg.jp→川口市）から推測。必ず出力すること
+- TSVのみ出力。説明文不要`;
 
+  console.log(`📄 Sending ${inputText.length} chars to DeepSeek...`);
+  const startTime = Date.now();
+  
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 90000);
+  
   try {
     const response = await fetch('https://api.deepseek.com/v1/chat/completions', {
       method: 'POST',
@@ -198,19 +612,18 @@ ${truncatedText}
       body: JSON.stringify({
         model: 'deepseek-chat',
         messages: [
-          {
-            role: 'system',
-            content: 'あなたは体育館の個人開放スケジュールPDFを解析する専門家です。JSON形式で正確に情報を抽出してください。',
-          },
-          {
-            role: 'user',
-            content: prompt,
-          },
+          { role: 'system', content: 'スケジュールPDF解析AI。指定のTSV形式のみ出力。' },
+          { role: 'user', content: prompt },
         ],
-        temperature: 0.3, // より一貫性のある結果を得るため低めに設定
-        max_tokens: 2000,
+        temperature: 0,
+        max_tokens: 4000,
       }),
+      signal: controller.signal,
     });
+    
+    clearTimeout(timeout);
+    const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+    console.log(`✅ DeepSeek responded in ${elapsed}s`);
     
     if (!response.ok) {
       const errorText = await response.text();
@@ -221,36 +634,159 @@ ${truncatedText}
     const content = data.choices[0]?.message?.content;
     
     if (!content) {
-      throw new Error('No content from DeepSeek API');
+      throw new Error('DeepSeek APIからレスポンスがありません');
     }
     
-    // JSONを抽出（コードブロックがある場合を考慮）
-    let jsonText = content.trim();
-    
-    // コードブロックを除去
-    if (jsonText.startsWith('```')) {
-      const lines = jsonText.split('\n');
-      const startIndex = lines.findIndex((line: string) => line.includes('{'));
-      const endIndex = lines.findLastIndex((line: string) => line.includes('}'));
-      jsonText = lines.slice(startIndex, endIndex + 1).join('\n');
+    console.log(`📝 Response length: ${content.length} chars`);
+    return parseTsvResponse(content);
+  } catch (error: any) {
+    clearTimeout(timeout);
+    if (error.name === 'AbortError') {
+      throw new Error('AI解析がタイムアウトしました（90秒）。PDFが大きすぎる可能性があります。');
     }
-    
-    // JSONをパース
-    const parsed = JSON.parse(jsonText);
-    
-    // 型を確認して返す（nullや空文字列はundefinedに変換）
-    return {
-      gymName: parsed.gymName && parsed.gymName.trim() ? parsed.gymName.trim() : '体育館',
-      areaName: parsed.areaName && parsed.areaName.trim() ? parsed.areaName.trim() : undefined,
-      address: parsed.address && parsed.address.trim() ? parsed.address.trim() : undefined,
-      tel: parsed.tel && parsed.tel.trim() ? parsed.tel.trim() : undefined,
-      slots: Array.isArray(parsed.slots) ? parsed.slots : [],
-    };
-  } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred during DeepSeek API call';
-    console.error(`❌ DeepSeek API error: ${errorMessage}`);
-    throw new Error(`DeepSeek API extraction failed: ${errorMessage}`);
+    throw error;
   }
+}
+
+/**
+ * AIのTSVレスポンスをパースしてスロット配列に変換
+ */
+function parseTsvResponse(content: string): {
+  gymName: string;
+  address?: string;
+  tel?: string;
+  areaName?: string;
+  slots: ParsedPDFSlot[];
+} {
+  const lines = content.trim().split('\n').filter(l => l.trim());
+  
+  let gymName = '体育館';
+  let areaName: string | undefined;
+  let tel: string | undefined;
+  const slots: ParsedPDFSlot[] = [];
+  
+  for (const line of lines) {
+    const cols = line.split('\t').map(c => c.trim());
+    
+    if (cols[0] === 'INFO' && cols.length >= 3) {
+      gymName = cols[1] || '体育館';
+      areaName = cols[2] || undefined;
+      tel = cols[3] || undefined;
+      continue;
+    }
+    
+    if (cols[0] === 'SLOT' && cols.length >= 6) {
+      const status = cols[5] as 'available' | 'few' | 'full' | 'closed';
+      if (status === 'full' || status === 'closed') continue;
+      
+      slots.push({
+        date: cols[1],
+        start_time: cols[2],
+        end_time: cols[3],
+        sport_name: cols[4],
+        status,
+        capacity: null,
+        remaining: null,
+        reception_type: 'same_day',
+        target: '',
+        notes: cols[6] || '',
+      });
+      continue;
+    }
+    
+    // フォールバック: タブ区切りでINFO/SLOTプレフィックスがない場合
+    if (cols.length >= 5 && /^\d{4}-\d{2}-\d{2}$/.test(cols[0])) {
+      const status = (cols[4] || 'available') as 'available' | 'few' | 'full' | 'closed';
+      if (status === 'full' || status === 'closed') continue;
+      
+      slots.push({
+        date: cols[0],
+        start_time: cols[1],
+        end_time: cols[2],
+        sport_name: cols[3],
+        status,
+        capacity: null,
+        remaining: null,
+        reception_type: 'same_day',
+        target: '',
+        notes: cols[5] || '',
+      });
+    }
+  }
+  
+  // 体育館以外の施設スロットを除外
+  const NON_GYM_KEYWORDS = ['水泳', 'プール', 'トレーニング', '浴室', '庭球', 'テニスコート', 'サウナ'];
+  const filteredSlots = slots.filter(
+    slot => !NON_GYM_KEYWORDS.some(kw => slot.sport_name.includes(kw))
+  );
+  
+  const removed = slots.length - filteredSlots.length;
+  if (removed > 0) {
+    console.log(`🏋️ Filtered: ${removed} non-gym slots removed (pool, training room, etc.)`);
+  }
+  console.log(`📊 Parsed: ${gymName} (${areaName}), ${filteredSlots.length} gym slots`);
+  
+  return { gymName, areaName, tel, slots: filteredSlots };
+}
+
+
+/**
+ * AIが出力したスロットの日付をPDFテキストと照合し、
+ * PDFに実際に記載されている日付のみを残す。
+ *
+ * PDFテキストから "5 木" "20 祝" のような (日, 曜日) ペアを抽出し、
+ * 各候補月でカレンダー上の曜日と一致するか検証する。
+ */
+function validateSlotDatesAgainstPdf(slots: ParsedPDFSlot[], pdfText: string): ParsedPDFSlot[] {
+  if (slots.length === 0) return slots;
+
+  const dowNames = ['日', '月', '火', '水', '木', '金', '土'];
+  // PDFテキストから (日, 曜日/祝) ペアを抽出
+  // (?=\s|$) は lookahead で、スペースを消費しないため同一行の複数ペアを拾える
+  const datePatterns = [...pdfText.matchAll(/(\d{1,2})\s+(日|月|火|水|木|金|土|祝)(?=\s|$)/gm)];
+
+  if (datePatterns.length === 0) {
+    console.log('🗓️ No date patterns found in PDF text — skipping date validation');
+    return slots;
+  }
+
+  console.log(`🗓️ Found ${datePatterns.length} date-dayOfWeek pairs in PDF text`);
+
+  // スロットに含まれる月の一覧を取得
+  const monthSet = new Set(slots.map(s => s.date.substring(0, 7)));
+
+  // 有効な YYYY-MM-DD の集合を構築
+  const validDates = new Set<string>();
+
+  for (const [, dayStr, dow] of datePatterns) {
+    const day = parseInt(dayStr, 10);
+
+    for (const yearMonth of monthSet) {
+      const [y, m] = yearMonth.split('-').map(Number);
+
+      // この月にこの日が存在するか
+      const dateObj = new Date(y, m - 1, day);
+      if (dateObj.getMonth() + 1 !== m || dateObj.getDate() !== day) continue;
+
+      const actualDow = dowNames[dateObj.getDay()];
+
+      // 曜日が一致、または「祝」（祝日はどの曜日でもOK）
+      if (dow === actualDow || dow === '祝') {
+        validDates.add(`${y}-${String(m).padStart(2, '0')}-${String(day).padStart(2, '0')}`);
+      }
+    }
+  }
+
+  console.log(`🗓️ Valid dates from PDF: ${[...validDates].sort().join(', ')}`);
+
+  const filtered = slots.filter(s => validDates.has(s.date));
+  const removed = slots.length - filtered.length;
+  if (removed > 0) {
+    const removedDates = [...new Set(slots.filter(s => !validDates.has(s.date)).map(s => s.date))].sort();
+    console.log(`🗓️ Removed ${removed} slots (${removedDates.length} dates not in PDF): ${removedDates.join(', ')}`);
+  }
+
+  return filtered;
 }
 
 /**
@@ -560,6 +1096,18 @@ async function addGymToFirestore(
 }
 
 /**
+ * Promiseにタイムアウトを付与するヘルパー
+ */
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error(`${label}がタイムアウトしました（${ms / 1000}秒）。Firebaseエミュレーターが起動しているか確認してください。`)), ms)
+    ),
+  ]);
+}
+
+/**
  * POST /api/parse-pdf
  * PDFを解析してgyms/open_slotsに追加
  */
@@ -577,29 +1125,34 @@ export async function POST(request: NextRequest) {
     
     console.log('🚀 Starting PDF parsing for source:', sourceId);
     
-    // 1. PDFを解析
+    // Step 1: PDF解析（テキスト抽出 + AI構造化）
     console.log('📄 Step 1: Parsing PDF...');
     const parsedData = await parsePDF(url);
-    console.log('✅ PDF parsing completed:', {
+    console.log('✅ PDF parsed:', {
       gymName: parsedData.gymName,
       areaName: parsedData.areaName,
-      address: parsedData.address,
-      tel: parsedData.tel,
       slotsCount: parsedData.slots.length,
     });
     
-    // 2. 体育館情報をgymsに追加
-    console.log('🏋️ Step 2: Adding gym to Firestore...');
-    const gymId = await addGymToFirestore(
-      parsedData.gymName,
-      parsedData.areaName,
-      parsedData.address,
-      parsedData.tel,
-      url
-    );
-    console.log('✅ Gym added with ID:', gymId);
+    if (parsedData.slots.length === 0) {
+      return NextResponse.json({
+        success: false,
+        error: 'No slots extracted',
+        message: 'PDFからスケジュール情報を抽出できませんでした。表の形式が対応していない可能性があります。',
+        gymName: parsedData.gymName,
+      }, { status: 422 });
+    }
     
-    // 3. 空き時間情報をopen_slotsに追加
+    // Step 2: 体育館情報をgymsに追加（10秒タイムアウト）
+    console.log('🏋️ Step 2: Adding gym to Firestore...');
+    const gymId = await withTimeout(
+      addGymToFirestore(parsedData.gymName, parsedData.areaName, parsedData.address, parsedData.tel, url),
+      10000,
+      'Firestore書き込み'
+    );
+    console.log('✅ Gym added:', gymId);
+    
+    // Step 3: 空き時間情報をopen_slotsに追加（30秒タイムアウト）
     console.log('📅 Step 3: Converting slots to open_slots...');
     const parsedPDFData: ParsedPDFData = {
       gym_id: gymId,
@@ -607,37 +1160,57 @@ export async function POST(request: NextRequest) {
       slots: parsedData.slots,
       metadata: {
         parsed_at: new Date(),
-        parser_version: 'v1.0',
+        parser_version: 'v2.0',
       },
     };
     
-    const conversionResult = await convertPDFToOpenSlots(parsedPDFData);
-    console.log('✅ Slot conversion completed:', conversionResult);
+    const conversionResult = await withTimeout(
+      convertPDFToOpenSlots(parsedPDFData),
+      30000,
+      'スロット保存'
+    );
     
-    // 4. sourcesのgym_idを更新
-    const sourceRef = doc(db, 'sources', sourceId);
-    await updateDoc(sourceRef, {
-      gym_id: gymId,
-      last_checked_at: Timestamp.now(),
-    });
+    // Step 4: sourcesのgym_idを更新
+    try {
+      const sourceRef = doc(db, 'sources', sourceId);
+      await withTimeout(
+        updateDoc(sourceRef, { gym_id: gymId, last_checked_at: Timestamp.now() }),
+        5000,
+        'ソース更新'
+      );
+    } catch (e) {
+      console.warn('⚠️ Source update failed (non-critical):', e instanceof Error ? e.message : e);
+    }
     
-    console.log('✅ PDF parsing completed:', {
+    console.log('✅ All done:', {
       gymId,
       slotsAdded: conversionResult.success,
       slotsFailed: conversionResult.failed,
     });
+    
+    const uniqueDates = Array.from(new Set(parsedData.slots.map(s => s.date))).sort();
+    const uniqueSports = Array.from(new Set(parsedData.slots.map(s => s.sport_name)));
     
     return NextResponse.json({
       success: true,
       gymId,
+      gymName: parsedData.gymName,
+      gymNameAutoDetected: parsedData.gymNameAutoDetected,
+      areaName: parsedData.areaName,
       slotsAdded: conversionResult.success,
       slotsFailed: conversionResult.failed,
       errors: conversionResult.errors,
+      summary: {
+        totalSlots: parsedData.slots.length,
+        dates: uniqueDates,
+        sports: uniqueSports,
+        dateCount: uniqueDates.length,
+        sportCount: uniqueSports.length,
+      },
     });
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     console.error('❌ Error parsing PDF:', errorMessage);
-    console.error('❌ Error stack:', error instanceof Error ? error.stack : 'No stack trace');
     
     return NextResponse.json(
       {

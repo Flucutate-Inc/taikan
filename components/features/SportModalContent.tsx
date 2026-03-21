@@ -8,7 +8,7 @@ interface SportModalContentProps {
   initialValue?: string;
 }
 
-const SPORTS = ['バドミントン', '卓球', 'バスケットボール', 'バレーボール', 'フットサル', 'プール'];
+const SPORTS = ['バドミントン', '卓球'];
 
 export const SportModalContent: React.FC<SportModalContentProps> = ({ onSelect, initialValue = '' }) => {
   const [selectedSports, setSelectedSports] = useState<string[]>(
